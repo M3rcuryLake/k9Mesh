@@ -1,7 +1,7 @@
 
 # k9Mesh
 
-I have cloned the core (the engine) of the espectre project to the root, all the csi code is gonna go there, and we r gonna give credits where it is due. The rover code is gonna go in the rover directory and the UI code in the fronted. The datasheet is provided (although i dont fully trust that). And yeah we gonna have to make a better readme.
+I have cloned the core (the engine) of the espectre project to the root, all the csi code is gonna go there, and we r gonna give credits where it is due (no code modification where not required and no removal of licensing). The rover code is gonna go in the rover directory and the UI code in the fronted. The datasheet is provided (although i dont fully trust that). And yeah we gonna have to make a better readme.
 
 INITIAL TODO :
 - [ ] make a starting readme.md
