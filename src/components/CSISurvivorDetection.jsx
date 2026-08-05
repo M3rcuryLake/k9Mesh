@@ -3,92 +3,41 @@ const NA = '--'
 export default function CSISurvivorDetection({ csi }) {
   const hasData = csi.breathingDetected !== null && csi.breathingDetected !== undefined
 
-  const terminalRow = {
-    display: 'flex',
-    alignItems: 'baseline',
-    marginBottom: '6px',
-    letterSpacing: '0.5px',
-  }
-
-  const label = {
-    color: 'var(--green-dark)',
-    marginRight: '6px',
-    flexShrink: 0,
-  }
-
-  const value = {
-    fontWeight: 'bold',
-  }
-
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="panel-title">CSI SURVIVOR DETECTION</div>
       <hr className="divider" />
-
       <div className="section-inner" style={{ flex: 1 }}>
 
         {!hasData && (
-          <div style={{ color: 'var(--green-dark)', lineHeight: '1.8' }}>WAITING FOR CSI DATA...</div>
+          <div style={{ color: '#004422', marginBottom: '12px', lineHeight: '1.8' }}>WAITING...</div>
         )}
 
-        {hasData && (
-          <div style={{ lineHeight: '1.8' }}>
+        {hasData && csi.breathingDetected && (
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ marginBottom: '8px' }}>🟢 Breathing Detected</div>
+            <div style={{ lineHeight: '2.2' }}>
+              <div style={{ color: '#004422', fontSize: '9px' }}>Estimated Rate</div>
+              <div style={{ fontWeight: 'bold' }}>{csi.breathingRate !== null ? `${csi.breathingRate} BPM` : NA}</div>
 
-            {/* Breathing status — value comes directly from telemetry, no frontend inference */}
-            <div style={{ ...terminalRow, marginBottom: '10px', fontWeight: 'bold' }}>
-              <span style={label}>&gt;</span>
-              <span style={value}>
-                {csi.breathingDetected ? 'BREATHING DETECTED' : 'NO BREATHING DETECTED'}
-              </span>
+              <div style={{ color: '#004422', fontSize: '9px', marginTop: '4px' }}>Confidence</div>
+              <div style={{ fontWeight: 'bold' }}>{csi.confidence !== null ? `${csi.confidence}%` : NA}</div>
+
+              <div style={{ color: '#004422', fontSize: '9px', marginTop: '4px' }}>State</div>
+              <div style={{ fontWeight: 'bold' }}>{csi.state !== null ? csi.state : NA}</div>
             </div>
-
-            {csi.breathingDetected && (
-              <>
-                <div style={terminalRow}>
-                  <span style={label}>&gt; ESTIMATED RATE:</span>
-                  <span style={value}>
-                    {csi.breathingRate !== null && csi.breathingRate !== undefined
-                      ? `${csi.breathingRate} BPM`
-                      : NA}
-                  </span>
-                </div>
-
-                <div style={terminalRow}>
-                  <span style={label}>&gt; CONFIDENCE:</span>
-                  <span style={value}>
-                    {/* Render raw telemetry string — UI never rounds or truncates */}
-                    {csi.confidence !== null && csi.confidence !== undefined
-                      ? `${csi.confidence}%`
-                      : NA}
-                  </span>
-                </div>
-
-                <div style={terminalRow}>
-                  <span style={label}>&gt; STATE:</span>
-                  <span style={value}>
-                    {csi.state !== null && csi.state !== undefined ? csi.state : NA}
-                  </span>
-                </div>
-              </>
-            )}
-
           </div>
+        )}
+
+        {hasData && !csi.breathingDetected && (
+          <div style={{ marginBottom: '12px', color: '#00ff66' }}>⬛ No Breathing Detected</div>
         )}
 
       </div>
 
-      {/* Footer — static placeholders; values (OFFLINE, CALIBRATING, FAULT, DEGRADED) set by telemetry later */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        padding: '4px 8px',
-        borderTop: '1px dashed var(--green)',
-        opacity: 0.7,
-        fontSize: '10px',
-        letterSpacing: '0.5px',
-      }}>
-        <span>CSI ARRAY: ONLINE</span>
-        <span>CALIBRATED</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 8px', borderTop: '1px dashed var(--green)', opacity: 0.7, fontSize: '10px' }}>
+        <span>CSI ARRAY: {csi.arrayOnline !== null ? (csi.arrayOnline ? 'ONLINE' : 'OFFLINE') : NA}</span>
+        <span>{csi.calibrated !== null ? (csi.calibrated ? 'CALIBRATED' : 'UNCALIBRATED') : NA}</span>
       </div>
     </div>
   )
