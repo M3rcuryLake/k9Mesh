@@ -24,17 +24,51 @@ Run:
 
 import argparse
 import time
+import math
+import json
 from pathlib import Path
 from queue import Empty
-
 from scapy.all import AsyncSniffer
-
+import websocket
 from receiver import CSIReceiver
 from csi_dsp import DEFAULT_BAND
 from mvs_detector import MVSDetector, MOTION
 from ml_detector import MLDetector
 import nbvi
 
+
+ws = None
+
+def ws_send(payload):
+    global ws
+    if ws is None:
+        return
+    try:
+        ws.send(json.dumps(payload))
+    except (websocket.WebSocketConnectionClosedException, BrokenPipeError, ConnectionResetError):
+        ws = None
+
+def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_result, dropped, band, ml_enabled):
+    return {
+        "seq": packet.seq,
+        "timestamp_us": packet.timestamp,
+        "channel": packet.channel,
+        "rssi": packet.rssi,
+        "dropped": dropped,
+        "band": band,
+        "mvs": {
+            "state": mvs_state,
+            "variance": mvs_variance,
+            "threshold": mvs_threshold,
+            "confidence": mvs_conf,
+        },
+        "ml": {
+            "ready": ml_result["ready"],
+            "score": ml_result["score"],
+            "motion": ml_result["motion"],
+            "enabled": ml_enabled,
+        },
+    }
 
 def run_calibration(rx, duration_s, window_size):
     """Collect a still-room baseline, then pick a band and MVS threshold.
@@ -74,6 +108,25 @@ def run_calibration(rx, duration_s, window_size):
 
     return band, mvs
 
+def variance_to_confidence(variance, threshold, cap_multiplier=2.0):
+    # unwrap single-element arrays/lists, coerce to plain float
+    if hasattr(variance, "__len__") and not isinstance(variance, (str, bytes)):
+        variance = float(variance[0]) if len(variance) else 0.0
+    else:
+        variance = float(variance)
+
+    if threshold is None or threshold <= 0:
+        return 0.0
+    threshold = float(threshold[0]) if hasattr(threshold, "__len__") else float(threshold)
+
+    pct = (variance / (threshold * cap_multiplier)) * 100
+    return max(0.0, min(100.0, pct))
+
+def variance_to_confidence_sigmoid(variance, threshold, steepness=6.0):
+    if threshold is None or threshold <= 0:
+        return 0.0
+    x = variance / threshold
+    return 100 / (1 + math.exp(-steepness * (x - 1)))  # 50% at variance==threshold
 
 def main():
     ap = argparse.ArgumentParser()
@@ -116,34 +169,35 @@ def main():
     n_packets = 0
 
     try:
+        global ws          # <-- add this line
+
+        try:
+            ws = websocket.create_connection("ws://localhost:8080")
+        except Exception as e:
+            print(f"WebSocket connect failed: {e}")
+
+
         while True:
             try:
                 packet = rx.recv(timeout=1.0)
             except Empty:
                 continue
 
-            n_packets += 1
             mvs_state, mvs_variance = mvs.process(packet.amplitudes)
             ml_result = ml.process(packet.amplitudes)
+            mvs_confidence = variance_to_confidence(mvs_variance, mvs.threshold)  # no trailing comma
 
-            if mvs_state != last_mvs_state:
-                marker = "!!! MOTION !!!" if mvs_state == MOTION else "idle"
-                print(f"[seq={packet.seq}] MVS -> {marker} (variance={mvs_variance:.4f})")
-                last_mvs_state = mvs_state
+            result = build_json(packet, mvs_state, mvs_variance, mvs.threshold,
+                                mvs_confidence, ml_result, rx.dropped, band, ml.enabled)
+            print(json.dumps(result))
+            ws_send(result)                        # was: print(json.dumps(result))
 
-            if ml_result["ready"] and n_packets % 25 == 0:
-                if ml.enabled:
-                    tag = "MOTION" if ml_result["motion"] else "idle"
-                    print(f"[seq={packet.seq}] ML  -> {tag} (p={ml_result['score']:.3f})  "
-                          f"| MVS variance={mvs_variance:.8f}, dropped={rx.dropped}")
-                else:
-                    print(f"[seq={packet.seq}] MVS variance={mvs_variance:.8f}, "
-                          f"dropped={rx.dropped} (no ML model loaded)")
 
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
         sniffer.stop()
+        ws.close()
         print(f"Total packets: {n_packets}, dropped: {rx.dropped}")
 
 
