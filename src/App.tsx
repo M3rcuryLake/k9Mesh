@@ -1,4 +1,5 @@
 import './index.css'
+import type { RoverTelemetry } from './types/telemetry'
 import SystemVitals from './components/SystemVitals'
 import CSISurvivorDetection from './components/CSISurvivorDetection'
 import MotionDetector from './components/MotionDetector'
@@ -6,7 +7,8 @@ import GpsNav from './components/GpsNav'
 import HeadingIMU from './components/HeadingIMU'
 import Odometry from './components/Odometry'
 
-const INITIAL_TELEMETRY = {
+/** Null telemetry — all sensors disconnected. Replace with MQTT feed in Phase 2. */
+const INITIAL_TELEMETRY: RoverTelemetry = {
   radio: {
     linkQuality: null,
     rssi: null,
@@ -63,35 +65,29 @@ export default function App() {
   const telemetry = INITIAL_TELEMETRY
 
   return (
-    <div style={{
-      backgroundColor: '#000000',
-      color: '#00ff66',
-      fontFamily: "'Courier New', Courier, monospace",
-      fontSize: '11px',
-      minHeight: '100vh',
-      padding: '10px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px',
-    }}>
+    <div className="bg-black text-green font-mono text-[11px] min-h-screen p-[10px] flex flex-col gap-2">
 
-      <div style={{ textAlign: 'center', fontSize: '22px', fontWeight: 'bold', letterSpacing: '8px', padding: '8px 0 6px 0' }}>
+      {/* Header */}
+      <div className="text-center text-[22px] font-bold tracking-[8px] py-2">
         K9MESH
       </div>
 
+      {/* Row 1 — System Vitals */}
       <SystemVitals
         radio={telemetry.radio}
         hardware={telemetry.hardware}
         battery={telemetry.battery}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
+      {/* Row 2 — CSI | Motion | GPS */}
+      <div className="grid grid-cols-[2fr_1fr_1fr] gap-2">
         <CSISurvivorDetection csi={telemetry.csi} />
         <MotionDetector motion={telemetry.motion} />
         <GpsNav gps={telemetry.gps} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+      {/* Row 3 — Heading/IMU | Odometry */}
+      <div className="grid grid-cols-2 gap-2">
         <HeadingIMU imu={telemetry.imu} />
         <Odometry odometry={telemetry.odometry} />
       </div>

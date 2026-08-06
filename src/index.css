@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+@theme {
+  --color-green: #00ff66;
+  --color-green-dim: #00aa44;
+  --color-green-dark: #004422;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -14,47 +20,9 @@ body {
   overflow-x: hidden;
 }
 
+/* Keep CSS vars for any inline-style fallbacks */
 :root {
   --green: #00ff66;
   --green-dim: #00aa44;
   --green-dark: #004422;
-  --black: #000000;
-}
-
-.panel {
-  border: 1px solid var(--green);
-  background-color: #000000;
-}
-
-.panel-title {
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 0.05em;
-  color: var(--green);
-  padding: 6px 8px 4px 8px;
-}
-
-.divider {
-  border: none;
-  border-top: 1px dashed var(--green);
-  margin: 0 8px 6px 8px;
-  opacity: 0.5;
-}
-
-.label {
-  color: var(--green);
-  font-size: 10px;
-}
-
-.value {
-  color: var(--green);
-  font-size: 10px;
-}
-
-.status-ok {
-  color: var(--green);
-}
-
-.section-inner {
-  padding: 4px 8px 6px 8px;
 }

@@ -1,13 +1,50 @@
 {
-  "name": "sih26",
+  "name": "k9mesh",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "2.0.0",
+  "description": "K9Mesh Search & Rescue Rover Command Center",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "dev:app": "tsc -p tsconfig.node.json && cross-env NODE_ENV=development concurrently \"vite --port 5174 --strict-port\" \"wait-on http://localhost:5174 && electron .\"",
     "build": "vite build",
+    "build:app": "vite build && tsc -p tsconfig.node.json",
+    "preview": "vite preview",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "package": "npm run build:app && electron-builder",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit"
+  },
+  "build": {
+    "appId": "com.k9mesh.commander",
+    "productName": "K9MESH",
+    "copyright": "Copyright © 2026 K9Mesh",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "public/favicon.svg"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ]
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -18,8 +55,14 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
     "oxlint": "^1.75.0",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.2.0"
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "wait-on": "^9.1.0"
   }
 }
