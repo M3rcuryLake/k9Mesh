@@ -1,0 +1,305 @@
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
+import type {
+  TelemetrySource,
+  SourceType,
+  SourceTelemetryListener,
+  SourceStatusListener,
+} from './TelemetrySource';
+import {
+  type WebSocketSourceConfig,
+  type WebSocketSourceStats,
+  DEFAULT_WEBSOCKET_CONFIG,
+} from './websocketTypes';
+
+/**
+ * WebSocketTelemetrySource
+ *
+ * Implements TelemetrySource for real-time telemetry streaming over a local
+ * WebSocket server. Connects to Python-based producers (e.g., Micro-ESPectre CSI pipeline).
+ *
+ * Enforces:
+ * - Single active client ownership (rejects concurrent connections)
+ * - Maximum packet size boundary
+ * - Safe JSON parsing boundary (never throws or crashes on malformed frames)
+ * - Autonomous client reconnect support (server remains listening on client disconnect)
+ * - Zero coupling to React or renderer processes
+ */
+export class WebSocketTelemetrySource implements TelemetrySource {
+  public readonly id = 'websocket-live';
+  public readonly type: SourceType = 'websocket';
+  public readonly name = 'Live WebSocket Source (Python CSI)';
+
+  private readonly config: WebSocketSourceConfig;
+  private wss: WebSocketServer | null = null;
+  private activeSocket: WebSocket | null = null;
+
+  private isListening = false;
+  private connected = false;
+  private currentData: unknown | null = null;
+
+  private telemetryListeners = new Set<SourceTelemetryListener>();
+  private statusListeners = new Set<SourceStatusListener>();
+
+  private stats: {
+    totalConnectionsAccepted: number;
+    totalConnectionsRejected: number;
+    messagesReceived: number;
+    messagesDroppedOversized: number;
+    messagesDroppedMalformedJson: number;
+    lastMessageTimestamp: number;
+  } = {
+    totalConnectionsAccepted: 0,
+    totalConnectionsRejected: 0,
+    messagesReceived: 0,
+    messagesDroppedOversized: 0,
+    messagesDroppedMalformedJson: 0,
+    lastMessageTimestamp: 0,
+  };
+
+  constructor(config?: Partial<WebSocketSourceConfig>) {
+    this.config = Object.freeze({
+      ...DEFAULT_WEBSOCKET_CONFIG,
+      ...config,
+    });
+  }
+
+  public async start(): Promise<void> {
+    if (this.wss) return;
+
+    return new Promise((resolve, reject) => {
+      try {
+        this.wss = new WebSocketServer({
+          host: this.config.host,
+          port: this.config.port,
+        });
+
+        this.wss.on('listening', () => {
+          this.isListening = true;
+          console.info(
+            `[WebSocketTelemetrySource] WebSocket server listening on ws://${this.config.host}:${this.config.port}`
+          );
+          resolve();
+        });
+
+        this.wss.on('connection', (socket: WebSocket, req) => {
+          this.handleIncomingConnection(socket, req.socket.remoteAddress);
+        });
+
+        this.wss.on('error', (err: Error) => {
+          console.error('[WebSocketTelemetrySource] Server error:', err.message);
+          // If server fails to bind during initial start, reject promise
+          if (!this.isListening) {
+            reject(err);
+          }
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async stop(): Promise<void> {
+    if (!this.wss) return;
+
+    return new Promise((resolve) => {
+      // Cleanly terminate active client socket
+      if (this.activeSocket) {
+        try {
+          this.activeSocket.removeAllListeners();
+          this.activeSocket.terminate();
+        } catch {
+          // Ignore socket termination errors during teardown
+        }
+        this.activeSocket = null;
+      }
+
+      this.setConnected(false);
+
+      this.wss?.close(() => {
+        this.wss = null;
+        this.isListening = false;
+        console.info('[WebSocketTelemetrySource] WebSocket server stopped and port released.');
+        resolve();
+      });
+    });
+  }
+
+  public onTelemetry(listener: SourceTelemetryListener): () => void {
+    this.telemetryListeners.add(listener);
+    if (this.connected && this.currentData) {
+      listener(this.currentData);
+    }
+    return () => {
+      this.telemetryListeners.delete(listener);
+    };
+  }
+
+  public onStatusChange(listener: SourceStatusListener): () => void {
+    this.statusListeners.add(listener);
+    listener(this.connected);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
+  }
+
+  public getCurrentTelemetry(): unknown | null {
+    return this.currentData;
+  }
+
+  public isConnected(): boolean {
+    return this.connected;
+  }
+
+  public getConfig(): Readonly<WebSocketSourceConfig> {
+    return this.config;
+  }
+
+  public getStats(): WebSocketSourceStats {
+    return Object.freeze({
+      serverListening: this.isListening,
+      activeClientsCount: this.activeSocket !== null ? 1 : 0,
+      totalConnectionsAccepted: this.stats.totalConnectionsAccepted,
+      totalConnectionsRejected: this.stats.totalConnectionsRejected,
+      messagesReceived: this.stats.messagesReceived,
+      messagesDroppedOversized: this.stats.messagesDroppedOversized,
+      messagesDroppedMalformedJson: this.stats.messagesDroppedMalformedJson,
+      lastMessageTimestamp: this.stats.lastMessageTimestamp,
+    });
+  }
+
+  private handleIncomingConnection(socket: WebSocket, remoteAddress?: string): void {
+    // Enforce single active client ownership
+    if (this.activeSocket !== null && this.activeSocket.readyState === WebSocket.OPEN) {
+      this.stats.totalConnectionsRejected += 1;
+      console.warn(
+        `[WebSocketTelemetrySource] Rejected connection from ${remoteAddress ?? 'unknown'}: Single client limit (${this.config.maxActiveClients}) reached.`
+      );
+      socket.close(4001, 'Another telemetry producer is already connected');
+      return;
+    }
+
+    this.activeSocket = socket;
+    this.stats.totalConnectionsAccepted += 1;
+    this.setConnected(true);
+    console.info(
+      `[WebSocketTelemetrySource] Telemetry producer connected from ${remoteAddress ?? 'unknown'}.`
+    );
+
+    socket.on('message', (rawData: RawData, isBinary: boolean) => {
+      this.handleIncomingMessage(rawData, isBinary);
+    });
+
+    socket.on('close', (code: number, reason: Buffer) => {
+      this.handleClientClose(socket, code, reason.toString('utf-8'));
+    });
+
+    socket.on('error', (err: Error) => {
+      this.handleClientError(socket, err);
+    });
+  }
+
+  private handleIncomingMessage(rawData: RawData, _isBinary: boolean): void {
+    this.stats.messagesReceived += 1;
+
+    // Determine payload byte length
+    const byteLength = this.getRawDataLength(rawData);
+    if (byteLength > this.config.maxMessageSizeBytes) {
+      this.stats.messagesDroppedOversized += 1;
+      console.warn(
+        `[WebSocketTelemetrySource] Dropped oversized frame: ${byteLength} bytes exceeds limit of ${this.config.maxMessageSizeBytes} bytes.`
+      );
+      return;
+    }
+
+    // Convert to UTF-8 text string
+    const text = this.rawDataToString(rawData);
+
+    // Defensive JSON parsing boundary
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      this.stats.messagesDroppedMalformedJson += 1;
+      console.warn(
+        `[WebSocketTelemetrySource] Dropped malformed JSON packet: ${(err as Error).message}`
+      );
+      return;
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      this.stats.messagesDroppedMalformedJson += 1;
+      console.warn('[WebSocketTelemetrySource] Dropped non-object JSON payload.');
+      return;
+    }
+
+    this.currentData = parsed;
+    this.stats.lastMessageTimestamp = Date.now();
+    this.notifyTelemetry(parsed);
+  }
+
+  private handleClientClose(socket: WebSocket, code: number, reason: string): void {
+    if (this.activeSocket === socket) {
+      this.activeSocket = null;
+      this.setConnected(false);
+      console.info(
+        `[WebSocketTelemetrySource] Telemetry producer disconnected (code: ${code}, reason: "${reason || 'none'}"). Server remains active.`
+      );
+    }
+  }
+
+  private handleClientError(socket: WebSocket, err: Error): void {
+    console.error('[WebSocketTelemetrySource] Client socket error:', err.message);
+    if (this.activeSocket === socket) {
+      this.activeSocket = null;
+      this.setConnected(false);
+    }
+  }
+
+  private setConnected(connected: boolean): void {
+    if (this.connected === connected) return;
+    this.connected = connected;
+    this.statusListeners.forEach((listener) => {
+      try {
+        listener(connected);
+      } catch (err) {
+        console.error('[WebSocketTelemetrySource] Error in status listener:', err);
+      }
+    });
+  }
+
+  private notifyTelemetry(data: unknown): void {
+    this.telemetryListeners.forEach((listener) => {
+      try {
+        listener(data);
+      } catch (err) {
+        console.error('[WebSocketTelemetrySource] Error in telemetry listener:', err);
+      }
+    });
+  }
+
+  private getRawDataLength(rawData: RawData): number {
+    if (Buffer.isBuffer(rawData)) {
+      return rawData.length;
+    }
+    if (Array.isArray(rawData)) {
+      return rawData.reduce((acc, chunk) => acc + chunk.length, 0);
+    }
+    if (rawData instanceof ArrayBuffer) {
+      return rawData.byteLength;
+    }
+    return String(rawData).length;
+  }
+
+  private rawDataToString(rawData: RawData): string {
+    if (Buffer.isBuffer(rawData)) {
+      return rawData.toString('utf-8');
+    }
+    if (Array.isArray(rawData)) {
+      return Buffer.concat(rawData).toString('utf-8');
+    }
+    if (rawData instanceof ArrayBuffer) {
+      return Buffer.from(rawData).toString('utf-8');
+    }
+    return String(rawData);
+  }
+}

@@ -1,4 +1,4 @@
-export type SourceType = 'scenario' | 'mqtt' | 'serial' | 'playback';
+export type SourceType = 'scenario' | 'mqtt' | 'serial' | 'playback' | 'websocket';
 
 export type SourceTelemetryListener = (data: unknown) => void;
 export type SourceStatusListener = (connected: boolean) => void;

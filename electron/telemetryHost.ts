@@ -1,6 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import type { TelemetrySource, SourceType } from './sources/TelemetrySource';
-import { ScenarioSource } from './sources/ScenarioSource';
+import { ScenarioSource, type ScenarioName } from './sources/ScenarioSource';
+import { WebSocketTelemetrySource } from './sources/WebSocketTelemetrySource';
+import type { WebSocketSourceConfig } from './sources/websocketTypes';
 import { TelemetryValidator, type ValidatorMetrics } from './validation/TelemetryValidator';
 import { SystemHealthManager } from './health/SystemHealthManager';
 import type { SystemHealthSnapshot } from './health/types';
@@ -92,6 +94,20 @@ export class TelemetryHost {
       { sourceId: source.id, sourceType: source.type }
     );
     await this.bindActiveSource();
+  }
+
+  public async switchToWebSocketSource(
+    config?: Partial<WebSocketSourceConfig>
+  ): Promise<void> {
+    const wsSource = new WebSocketTelemetrySource(config);
+    await this.setSource(wsSource);
+  }
+
+  public async switchToScenarioSource(
+    scenarioName: ScenarioName = 'survivor_detected'
+  ): Promise<void> {
+    const scenarioSource = new ScenarioSource(scenarioName);
+    await this.setSource(scenarioSource);
   }
 
   public getActiveSource(): TelemetrySource {
