@@ -29,16 +29,16 @@ class MVSDetector:
     def __init__(
         self,
         band=None,
-        window_size=10,
-        gain_locked=True,
+        window_size=5,
+        gain_locked=False,
         hampel_enabled=True,
         hampel_window=7,
-        hampel_threshold=5.0,
+        hampel_threshold=15.0,
         lowpass_enabled=False,
         lowpass_cutoff_hz=11.0,
         sample_rate_hz=100.0,
         motion_on_hits=1,
-        motion_off_hits=2,
+        motion_off_hits=5,
     ):
         self.band = band or list(DEFAULT_BAND)
         self.window_size = window_size
@@ -49,10 +49,9 @@ class MVSDetector:
 
         self.turbulence_buffer = deque(maxlen=window_size)
 
-        self.threshold = None  # set by calibrate()
+        self.threshold = None
         self.state = IDLE
 
-        # Consecutive-hit filtering to avoid single-packet flapping
         self.motion_on_hits = motion_on_hits
         self.motion_off_hits = motion_off_hits
         self._on_streak = 0
@@ -73,10 +72,14 @@ class MVSDetector:
             t = self.lowpass.filter(t)
         return t
 
-    def calibrate(self, baseline_packets, pct=95, factor=1.1):
+    def calibrate(self, baseline_packets, pct=95, factor=0.7):
         """
-        Run over a baseline (idle) recording to set the adaptive threshold.
-        baseline_packets: iterable of amplitude lists (already parsed).
+        factor=0.7 (vs stock 1.1) deliberately sets the threshold BELOW
+        typical baseline noise. This is the main sensitivity lever --
+        combined with motion_on_hits=1, almost any deviation above baseline
+        will register as MOTION. Tune factor down further (e.g. 0.5) if
+        this still isn't sensitive enough, but expect the false-positive
+        rate to climb fast below ~0.6-0.7.
         """
         mv_values = []
         window = deque(maxlen=self.window_size)
@@ -90,17 +93,12 @@ class MVSDetector:
             raise ValueError("Not enough baseline packets to calibrate")
 
         self.threshold = calculate_adaptive_threshold(mv_values, pct, factor)
-        # Reset live buffers so calibration data doesn't bleed into runtime
         self.turbulence_buffer.clear()
         if self.hampel is not None:
             self.hampel.buffer.clear()
         return self.threshold
 
     def process(self, amplitudes):
-        """
-        Feed one packet's amplitude array. Returns (state, variance) -
-        state only changes once window_size samples have accumulated.
-        """
         t = self._turbulence_for_packet(amplitudes)
         self.turbulence_buffer.append(t)
 
@@ -111,7 +109,6 @@ class MVSDetector:
         self.last_variance = variance
 
         if self.threshold is None:
-            # No calibration run yet - report variance but don't flip state
             return self.state, variance
 
         is_motion_sample = variance > self.threshold

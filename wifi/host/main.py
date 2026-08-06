@@ -67,7 +67,7 @@ def run_calibration(rx, duration_s, window_size):
     mvs = MVSDetector(band=band, window_size=window_size)
     try:
         threshold = mvs.calibrate(baseline_frames)
-        print(f"MVS adaptive threshold: {threshold:.4f}")
+        print(f"MVS adaptive threshold: {threshold:.8f}")
     except Exception as e:
         print(f"MVS calibration failed ({e}); detector will run uncalibrated "
               f"(reports variance but never flags motion until you fix this).")
@@ -89,7 +89,7 @@ def main():
                           "MVS reports variance only (no motion flag)")
     args = ap.parse_args()
 
-    rx = CSIReceiver(interface=args.interface, port=args.port)
+    rx = CSIReceiver(interface=args.interface, port=args.port, queue_size=8192)
     sniffer = AsyncSniffer(
         iface=args.interface,
         filter=f"udp port {args.port}",
@@ -135,9 +135,9 @@ def main():
                 if ml.enabled:
                     tag = "MOTION" if ml_result["motion"] else "idle"
                     print(f"[seq={packet.seq}] ML  -> {tag} (p={ml_result['score']:.3f})  "
-                          f"| MVS variance={mvs_variance:.4f}, dropped={rx.dropped}")
+                          f"| MVS variance={mvs_variance:.8f}, dropped={rx.dropped}")
                 else:
-                    print(f"[seq={packet.seq}] MVS variance={mvs_variance:.4f}, "
+                    print(f"[seq={packet.seq}] MVS variance={mvs_variance:.8f}, "
                           f"dropped={rx.dropped} (no ML model loaded)")
 
     except KeyboardInterrupt:
