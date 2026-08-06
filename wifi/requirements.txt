@@ -2,6 +2,7 @@
 # Python dependencies for Micro-ESPectre CLI and analysis tools
 
 # Device Management Dependencies
+scapy
 esptool==5.2.0          # aligned with ESPHome 2026.5.0
 mpremote>=1.28.0        # Deploy code to MicroPython device (used as CLI tool)
 pyserial>=3.5           # Serial port detection and communication

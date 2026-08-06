@@ -23,7 +23,7 @@ MQTT_PASSWORD = "mqtt"
 
 # Traffic Generator Configuration
 # Generates WiFi traffic to ensure continuous CSI data
-TRAFFIC_GENERATOR_RATE = 100  # Default rate (packets per second, recommended: 100)
+TRAFFIC_GENERATOR_RATE = 20  # Default rate (packets per second, recommended: 100)
 TRAFFIC_GENERATOR_MODE = "ping"  # Default mode: "ping" or "dns"
 PUBLISH_INTERVAL = 100        # Packets between periodic MQTT/log updates
 EVALUATION_INTERVAL = 25      # Packets between internal detector evaluations
@@ -83,7 +83,7 @@ HAMPEL_THRESHOLD = 5.0        # Outlier detection threshold in MAD units (2.0-6.
 NUM_SUBCARRIERS = 64           # HT20: 64 subcarriers
 EXPECTED_CSI_LEN = 128         # 64 SC × 2 bytes (I/Q pairs)
 GUARD_BAND_LOW = 11            # First valid subcarrier
-GUARD_BAND_HIGH = 52           # Last valid subcarrier  
+GUARD_BAND_HIGH = 52           # Last valid subcarrier
 DC_SUBCARRIER = 32             # DC null subcarrier
 BAND_SIZE = 12                 # Selected subcarriers for motion detection
 
