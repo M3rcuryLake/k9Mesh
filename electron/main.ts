@@ -1,10 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron'
 import path from 'path'
-import { fileURLToPath } from 'url'
+import { TelemetryHost } from './telemetryHost'
 
-// __dirname is not available in ESM; derive it from import.meta if needed.
-// With module:Node16 and no "type":"module" in package.json, this compiles to CJS
-// so __dirname IS available as a native CJS global.
+// __dirname is available as native CJS global in Node16 output
 const isDev = process.env.NODE_ENV === 'development'
 
 function createWindow(): void {
@@ -39,7 +37,11 @@ function createWindow(): void {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Initialize TelemetryHost before creating window
+  const host = TelemetryHost.getInstance()
+  await host.initialize()
+
   createWindow()
 
   app.on('activate', () => {
@@ -49,4 +51,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', async () => {
+  await TelemetryHost.getInstance().dispose()
 })

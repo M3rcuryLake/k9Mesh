@@ -7,62 +7,20 @@ import GpsNav from './components/GpsNav'
 import HeadingIMU from './components/HeadingIMU'
 import Odometry from './components/Odometry'
 
-/** Null telemetry — all sensors disconnected. Replace with MQTT feed in Phase 2. */
-const INITIAL_TELEMETRY: RoverTelemetry = {
-  radio: {
-    linkQuality: null,
-    rssi: null,
-    latency: null,
-    signalPercent: null,
-  },
-  hardware: {
-    stm32: null,
-    esp32: null,
-    mqtt: null,
-    wifi: null,
-    coreTemp: null,
-  },
-  battery: {
-    percent: null,
-    voltage: null,
-    estTime: null,
-    discharge: null,
-  },
-  csi: {
-    breathingDetected: null,
-    breathingRate: null,
-    confidence: null,
-    state: null,
-    arrayOnline: null,
-    calibrated: null,
-  },
-  motion: {
-    level: null,
-    lastEventSeconds: null,
-  },
-  gps: {
-    latitude: null,
-    longitude: null,
-  },
-  imu: {
-    heading: null,
-    pitch: null,
-    roll: null,
-  },
-  odometry: {
-    speed: null,
-    distance: null,
-    motors: {
-      FL: null,
-      FR: null,
-      RL: null,
-      RR: null,
-    },
-  },
-}
+import { useMemo } from 'react'
+import { TelemetryProviderFactory } from './providers/TelemetryProviderFactory'
+import { useTelemetry } from './hooks/useTelemetry'
 
 export default function App() {
-  const telemetry = INITIAL_TELEMETRY
+  const provider = useMemo(
+    () =>
+      TelemetryProviderFactory.create('auto', {
+        json: { initialScenario: 'survivor_detected' },
+      }),
+    []
+  )
+
+  const { telemetry } = useTelemetry(provider)
 
   return (
     <div className="bg-black text-green font-mono text-[11px] min-h-screen p-[10px] flex flex-col gap-2">

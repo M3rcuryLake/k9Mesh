@@ -72,10 +72,12 @@ export interface OdometryTelemetry {
 /**
  * Complete telemetry model for the K9Mesh rover.
  * Null on any field = sensor data not yet received.
- * Populated entirely by the transport layer (MQTT / WebSocket / serial).
+ * Populated entirely by the TelemetryProvider abstraction.
  * No UI component may generate, randomise, or derive values from this interface.
  */
 export interface RoverTelemetry {
+  /** Epoch millisecond timestamp when telemetry was captured */
+  timestamp: number;
   radio: RadioTelemetry;
   hardware: HardwareTelemetry;
   battery: BatteryTelemetry;

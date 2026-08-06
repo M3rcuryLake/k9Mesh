@@ -1,21 +1,46 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron';
+
+export type IpcTelemetryListener = (data: unknown) => void;
+export type IpcStatusListener = (status: string) => void;
 
 /**
- * K9Mesh secure IPC bridge — Phase 2 infrastructure stub.
+ * K9Mesh Secure IPC Preload Bridge
  *
- * This API surface will expand in Phase 3+ to include:
- *   - MQTT client  (rover telemetry subscribe / publish)
- *   - STM32 serial communication
- *   - ESP32 serial communication
- *   - Serial port enumeration and management
- *   - USB device access
- *   - Local telemetry logging
- *   - IPC event routing
- *   - Configuration persistence (electron-store)
- *
- * Do NOT add hardware implementation here until Phase 3.
- * All renderer components remain unaware of Electron.
+ * Exposes a strict, typed API surface to the renderer process via contextBridge.
+ * Enforces context isolation and disables direct Node.js integration in the renderer.
  */
 contextBridge.exposeInMainWorld('k9mesh', {
-  // Intentionally empty — Phase 2 is infrastructure only.
-})
+  telemetry: {
+    getCurrent: async (): Promise<unknown> => {
+      return ipcRenderer.invoke('k9mesh:telemetry:get-current');
+    },
+
+    getStatus: async (): Promise<string> => {
+      return ipcRenderer.invoke('k9mesh:telemetry:get-status');
+    },
+
+    loadScenario: async (scenarioName: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('k9mesh:telemetry:load-scenario', scenarioName);
+    },
+
+    subscribe: (callback: IpcTelemetryListener): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        callback(data);
+      };
+      ipcRenderer.on('k9mesh:telemetry:update', listener);
+      return () => {
+        ipcRenderer.removeListener('k9mesh:telemetry:update', listener);
+      };
+    },
+
+    onStatusChange: (callback: IpcStatusListener): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: string) => {
+        callback(status);
+      };
+      ipcRenderer.on('k9mesh:telemetry:status', listener);
+      return () => {
+        ipcRenderer.removeListener('k9mesh:telemetry:status', listener);
+      };
+    },
+  },
+});
