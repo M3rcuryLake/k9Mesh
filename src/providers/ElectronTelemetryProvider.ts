@@ -7,7 +7,7 @@ import type {
 import type { RoverTelemetry } from '../types/telemetry';
 import type { ICDTelemetryMessage, ICDRoverTelemetryData } from '../types/icd';
 import { TelemetryMapper, NULL_TELEMETRY } from '../mappers/TelemetryMapper';
-
+//import { TelemetryMapper, NULL_TELEMETRY } from '../mapperrs/TelemetryMapper.ts';
 /**
  * ElectronTelemetryProvider
  * Proceeed as follows:
@@ -35,6 +35,9 @@ export class ElectronTelemetryProvider implements TelemetryProvider {
   public getStatus(): ConnectionStatus {
     return this.status;
   }
+
+  // public getValidatedMarks: ValidatedMarks => {
+  // return ValidatedMarks todo : creating specific files for making getStdio.H
 
   public getCurrentTelemetry(): RoverTelemetry {
     return this.currentTelemetry;

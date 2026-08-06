@@ -2,6 +2,8 @@ import { ipcMain, BrowserWindow } from 'electron';
 import type { TelemetrySource, SourceType } from './sources/TelemetrySource';
 import { ScenarioSource } from './sources/ScenarioSource';
 import { TelemetryValidator, type ValidatorMetrics } from './validation/TelemetryValidator';
+import { SystemHealthManager } from './health/SystemHealthManager';
+import type { SystemHealthSnapshot } from './health/types';
 
 export type HostConnectionStatus =
   | 'DISCONNECTED'
@@ -29,7 +31,8 @@ export interface RuntimeStatus {
  *
  * The authoritative runtime host for K9Mesh telemetry.
  * Manages active TelemetrySource, runs validation through TelemetryValidator,
- * maintains host runtime metrics, and handles secure IPC communication with the renderer process.
+ * maintains health metrics via SystemHealthManager,
+ * and handles secure IPC communication with the renderer process.
  */
 export class TelemetryHost {
   private static instance: TelemetryHost | null = null;
@@ -38,6 +41,7 @@ export class TelemetryHost {
   private currentTelemetry: unknown = null;
   private connectionStatus: HostConnectionStatus = 'DISCONNECTED';
   private validator = new TelemetryValidator();
+  private healthManager = new SystemHealthManager();
 
   private runtimeStatus: RuntimeStatus = {
     transport: 'scenario',
@@ -81,6 +85,12 @@ export class TelemetryHost {
 
     this.activeSource = source;
     this.runtimeStatus.transport = source.type;
+    this.healthManager.log(
+      'INFO',
+      'TRANSPORT',
+      `Active telemetry source switched to "${source.id}" (${source.type})`,
+      { sourceId: source.id, sourceType: source.type }
+    );
     await this.bindActiveSource();
   }
 
@@ -103,6 +113,10 @@ export class TelemetryHost {
     return this.validator.getMetrics();
   }
 
+  public getHealthSnapshot(): SystemHealthSnapshot {
+    return this.healthManager.getHealthSnapshot();
+  }
+
   public async dispose(): Promise<void> {
     if (this.sourceUnsubscribeTelemetry) this.sourceUnsubscribeTelemetry();
     if (this.sourceUnsubscribeStatus) this.sourceUnsubscribeStatus();
@@ -120,6 +134,9 @@ export class TelemetryHost {
 
       // Validate incoming telemetry packet through composed validation rules
       const result = this.validator.validate(data);
+
+      // SystemHealthManager observes raw packet and validation outcome
+      this.healthManager.recordPacketIngest(data, result);
 
       if (!result.valid) {
         this.runtimeStatus.packetsDropped += 1;
@@ -141,13 +158,22 @@ export class TelemetryHost {
         );
       }
 
+      const startIpc = Date.now();
       this.currentTelemetry = data;
       this.broadcastToRenderers('k9mesh:telemetry:update', data);
+      const ipcDurationMs = Date.now() - startIpc;
+      this.healthManager.recordIpcDispatch(ipcDurationMs);
     });
 
     this.sourceUnsubscribeStatus = this.activeSource.onStatusChange((connected) => {
       this.connectionStatus = connected ? 'CONNECTED' : 'DISCONNECTED';
       this.runtimeStatus.connected = connected;
+      this.healthManager.log(
+        'INFO',
+        'TRANSPORT',
+        `Transport link ${connected ? 'CONNECTED' : 'DISCONNECTED'}`,
+        { sourceId: this.activeSource.id, connected }
+      );
       this.broadcastToRenderers('k9mesh:telemetry:status', this.connectionStatus);
     });
 
@@ -166,6 +192,12 @@ export class TelemetryHost {
     ipcMain.handle('k9mesh:telemetry:load-scenario', async (_event, scenarioName: string) => {
       if (this.activeSource instanceof ScenarioSource) {
         this.activeSource.loadScenario(scenarioName);
+        this.healthManager.log(
+          'INFO',
+          'TELEMETRY',
+          `Deterministic scenario loaded: "${scenarioName}"`,
+          { scenario: scenarioName }
+        );
         return { success: true };
       }
       throw new Error(
