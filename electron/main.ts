@@ -2,8 +2,10 @@ import { app, BrowserWindow, shell } from 'electron'
 import path from 'path'
 import { TelemetryHost } from './telemetryHost'
 
-// __dirname is available as native CJS global in Node16 output
-const isDev = process.env.NODE_ENV === 'development'
+// Determine renderer loading strategy independently of telemetry source:
+// - In development mode (NODE_ENV === 'development'), load live Vite development server at http://localhost:5174.
+// - In all other modes (production desktop, packaged app, integration test mode), load compiled static bundle from dist/index.html.
+const isDevRenderer = process.env.NODE_ENV === 'development'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -24,7 +26,7 @@ function createWindow(): void {
   // Instrument panel — hide the application menu bar
   win.setMenuBarVisibility(false)
 
-  if (isDev) {
+  if (isDevRenderer) {
     win.loadURL('http://localhost:5174')
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'))

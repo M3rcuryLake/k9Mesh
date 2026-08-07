@@ -3,6 +3,7 @@ import type { TelemetrySource, SourceType } from './sources/TelemetrySource';
 import { ScenarioSource, type ScenarioName } from './sources/ScenarioSource';
 import { WebSocketTelemetrySource } from './sources/WebSocketTelemetrySource';
 import type { WebSocketSourceConfig } from './sources/websocketTypes';
+import { SourceFactory } from './sources/SourceFactory';
 import { TelemetryValidator, type ValidatorMetrics } from './validation/TelemetryValidator';
 import { SystemHealthManager } from './health/SystemHealthManager';
 import type { SystemHealthSnapshot } from './health/types';
@@ -21,11 +22,24 @@ export type HostConnectionStatus =
 export interface RuntimeStatus {
   transport: SourceType;
   connected: boolean;
+  activeProducer: string | null;
   lastPacketTimestamp: number;
   lastPacketAgeMs: number;
   packetsReceived: number;
+  packetsParsed: number;
+  packetsAdapted: number;
+  packetsValidated: number;
+  packetsPublished: number;
   packetsDropped: number;
-  reconnectAttempts: number;
+  malformedPackets: number;
+  oversizedPackets: number;
+  schemaFailures: number;
+  reconnectCount: number;
+  currentPacketRateHz: number;
+  averagePacketRateHz: number;
+  minPipelineLatencyMs: number;
+  maxPipelineLatencyMs: number;
+  avgPipelineLatencyMs: number;
 }
 
 /**
@@ -45,22 +59,52 @@ export class TelemetryHost {
   private validator = new TelemetryValidator();
   private healthManager = new SystemHealthManager();
 
+  private sessionStartTime = Date.now();
+  private packetTimestampsWindow: number[] = [];
+  private totalLatencyMs = 0;
+  private latencySamplesCount = 0;
+  private minLatencyMs = Number.MAX_VALUE;
+  private maxLatencyMs = 0;
+
   private runtimeStatus: RuntimeStatus = {
     transport: 'scenario',
     connected: false,
+    activeProducer: null,
     lastPacketTimestamp: 0,
     lastPacketAgeMs: 0,
     packetsReceived: 0,
+    packetsParsed: 0,
+    packetsAdapted: 0,
+    packetsValidated: 0,
+    packetsPublished: 0,
     packetsDropped: 0,
-    reconnectAttempts: 0,
+    malformedPackets: 0,
+    oversizedPackets: 0,
+    schemaFailures: 0,
+    reconnectCount: 0,
+    currentPacketRateHz: 0,
+    averagePacketRateHz: 0,
+    minPipelineLatencyMs: 0,
+    maxPipelineLatencyMs: 0,
+    avgPipelineLatencyMs: 0,
   };
 
   private sourceUnsubscribeTelemetry: (() => void) | null = null;
   private sourceUnsubscribeStatus: (() => void) | null = null;
 
+  private isDebug(): boolean {
+    return (
+      typeof process !== 'undefined' &&
+      (process.env.DEBUG_TELEMETRY === '1' ||
+        process.env.DEBUG === 'true' ||
+        process.env.DEBUG === '1')
+    );
+  }
+
   private constructor() {
-    // Default to deterministic ScenarioSource
-    this.activeSource = new ScenarioSource('survivor_detected');
+    // Determine and instantiate initial source using SourceFactory
+    this.activeSource = SourceFactory.createInitialSource();
+    this.runtimeStatus.transport = this.activeSource.type;
   }
 
   public static getInstance(): TelemetryHost {
@@ -99,14 +143,14 @@ export class TelemetryHost {
   public async switchToWebSocketSource(
     config?: Partial<WebSocketSourceConfig>
   ): Promise<void> {
-    const wsSource = new WebSocketTelemetrySource(config);
+    const wsSource = SourceFactory.createSource({ type: 'websocket', wsConfig: config });
     await this.setSource(wsSource);
   }
 
   public async switchToScenarioSource(
     scenarioName: ScenarioName = 'survivor_detected'
   ): Promise<void> {
-    const scenarioSource = new ScenarioSource(scenarioName);
+    const scenarioSource = SourceFactory.createSource({ type: 'scenario', scenario: scenarioName });
     await this.setSource(scenarioSource);
   }
 
@@ -116,11 +160,37 @@ export class TelemetryHost {
 
   public getRuntimeStatus(): RuntimeStatus {
     const now = Date.now();
+    const wsStats =
+      this.activeSource instanceof WebSocketTelemetrySource ? this.activeSource.getStats() : null;
+
+    // Prune sliding window for Hz calculation (last 1000ms)
+    this.packetTimestampsWindow = this.packetTimestampsWindow.filter((t) => now - t <= 1000);
+    const currentRate = this.packetTimestampsWindow.length;
+
+    const streamDurationSec = Math.max(1, (now - this.sessionStartTime) / 1000);
+    const avgRate = parseFloat((this.runtimeStatus.packetsPublished / streamDurationSec).toFixed(2));
+
     return {
       ...this.runtimeStatus,
+      activeProducer: wsStats ? wsStats.activeProducerAddress : null,
+      packetsReceived: wsStats ? wsStats.messagesReceived : this.runtimeStatus.packetsReceived,
+      packetsParsed: wsStats ? wsStats.messagesParsed : this.runtimeStatus.packetsReceived,
+      packetsAdapted: wsStats ? wsStats.messagesAdapted : this.runtimeStatus.packetsReceived,
+      malformedPackets: wsStats ? wsStats.messagesDroppedMalformedJson : 0,
+      oversizedPackets: wsStats ? wsStats.messagesDroppedOversized : 0,
+      schemaFailures: wsStats ? wsStats.messagesDroppedSchema : 0,
+      reconnectCount: wsStats ? wsStats.reconnectCount : 0,
+      currentPacketRateHz: currentRate,
+      averagePacketRateHz: avgRate,
       lastPacketAgeMs:
         this.runtimeStatus.lastPacketTimestamp > 0
           ? now - this.runtimeStatus.lastPacketTimestamp
+          : 0,
+      minPipelineLatencyMs: this.minLatencyMs === Number.MAX_VALUE ? 0 : this.minLatencyMs,
+      maxPipelineLatencyMs: this.maxLatencyMs,
+      avgPipelineLatencyMs:
+        this.latencySamplesCount > 0
+          ? parseFloat((this.totalLatencyMs / this.latencySamplesCount).toFixed(2))
           : 0,
     };
   }
@@ -145,8 +215,10 @@ export class TelemetryHost {
 
   private async bindActiveSource(): Promise<void> {
     this.sourceUnsubscribeTelemetry = this.activeSource.onTelemetry((data) => {
-      this.runtimeStatus.lastPacketTimestamp = Date.now();
+      const now = Date.now();
+      this.runtimeStatus.lastPacketTimestamp = now;
       this.runtimeStatus.packetsReceived += 1;
+      this.packetTimestampsWindow.push(now);
 
       // Validate incoming telemetry packet through composed validation rules
       const result = this.validator.validate(data);
@@ -157,7 +229,7 @@ export class TelemetryHost {
       if (!result.valid) {
         this.runtimeStatus.packetsDropped += 1;
         console.warn(
-          `[TelemetryHost] Dropped invalid telemetry packet from source "${this.activeSource.id}". Issues:\n` +
+          `[Validator] Packet rejected from source "${this.activeSource.id}". Issues:\n` +
             result.errors
               .map((e) => `  - [${e.field}] ${e.code}: ${e.message}`)
               .join('\n')
@@ -165,9 +237,14 @@ export class TelemetryHost {
         return;
       }
 
+      this.runtimeStatus.packetsValidated += 1;
+      if (this.isDebug()) {
+        console.log('[Validator] Accepted');
+      }
+
       if (result.warnings.length > 0) {
         console.info(
-          `[TelemetryHost] Telemetry packet accepted with warnings:\n` +
+          `[Validator] Packet accepted with warnings:\n` +
             result.warnings
               .map((w) => `  - [${w.field}] ${w.code}: ${w.message}`)
               .join('\n')
@@ -179,6 +256,17 @@ export class TelemetryHost {
       this.broadcastToRenderers('k9mesh:telemetry:update', data);
       const ipcDurationMs = Date.now() - startIpc;
       this.healthManager.recordIpcDispatch(ipcDurationMs);
+
+      // Track latency samples
+      this.latencySamplesCount += 1;
+      this.totalLatencyMs += ipcDurationMs;
+      if (ipcDurationMs < this.minLatencyMs) this.minLatencyMs = ipcDurationMs;
+      if (ipcDurationMs > this.maxLatencyMs) this.maxLatencyMs = ipcDurationMs;
+
+      this.runtimeStatus.packetsPublished += 1;
+      if (this.isDebug()) {
+        console.log(`[Host] Published (dispatch time: ${ipcDurationMs}ms)`);
+      }
     });
 
     this.sourceUnsubscribeStatus = this.activeSource.onStatusChange((connected) => {

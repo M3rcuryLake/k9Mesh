@@ -10,6 +10,8 @@ import {
   type WebSocketSourceStats,
   DEFAULT_WEBSOCKET_CONFIG,
 } from './websocketTypes';
+import { CsiTelemetryAdapter } from '../adapters/CsiTelemetryAdapter';
+import type { AdapterDiagnostics, RawMicroESPectrePacket } from '../adapters/types';
 
 /**
  * WebSocketTelemetrySource
@@ -22,6 +24,7 @@ import {
  * - Maximum packet size boundary
  * - Safe JSON parsing boundary (never throws or crashes on malformed frames)
  * - Autonomous client reconnect support (server remains listening on client disconnect)
+ * - Internal CSI Telemetry Adapter normalizing vendor packets into Master ICD envelopes
  * - Zero coupling to React or renderer processes
  */
 export class WebSocketTelemetrySource implements TelemetrySource {
@@ -30,6 +33,7 @@ export class WebSocketTelemetrySource implements TelemetrySource {
   public readonly name = 'Live WebSocket Source (Python CSI)';
 
   private readonly config: WebSocketSourceConfig;
+  private readonly adapter = new CsiTelemetryAdapter();
   private wss: WebSocketServer | null = null;
   private activeSocket: WebSocket | null = null;
 
@@ -43,18 +47,35 @@ export class WebSocketTelemetrySource implements TelemetrySource {
   private stats: {
     totalConnectionsAccepted: number;
     totalConnectionsRejected: number;
+    reconnectCount: number;
     messagesReceived: number;
+    messagesParsed: number;
+    messagesAdapted: number;
     messagesDroppedOversized: number;
     messagesDroppedMalformedJson: number;
+    messagesDroppedSchema: number;
     lastMessageTimestamp: number;
   } = {
     totalConnectionsAccepted: 0,
     totalConnectionsRejected: 0,
+    reconnectCount: 0,
     messagesReceived: 0,
+    messagesParsed: 0,
+    messagesAdapted: 0,
     messagesDroppedOversized: 0,
     messagesDroppedMalformedJson: 0,
+    messagesDroppedSchema: 0,
     lastMessageTimestamp: 0,
   };
+
+  private isDebug(): boolean {
+    return (
+      typeof process !== 'undefined' &&
+      (process.env.DEBUG_TELEMETRY === '1' ||
+        process.env.DEBUG === 'true' ||
+        process.env.DEBUG === '1')
+    );
+  }
 
   constructor(config?: Partial<WebSocketSourceConfig>) {
     this.config = Object.freeze({
@@ -75,9 +96,8 @@ export class WebSocketTelemetrySource implements TelemetrySource {
 
         this.wss.on('listening', () => {
           this.isListening = true;
-          console.info(
-            `[WebSocketTelemetrySource] WebSocket server listening on ws://${this.config.host}:${this.config.port}`
-          );
+          console.info(`[WS] Listening on ws://${this.config.host}:${this.config.port}`);
+          console.info('[WS] Waiting for producer...');
           resolve();
         });
 
@@ -86,7 +106,7 @@ export class WebSocketTelemetrySource implements TelemetrySource {
         });
 
         this.wss.on('error', (err: Error) => {
-          console.error('[WebSocketTelemetrySource] Server error:', err.message);
+          console.error('[WS] Server error:', err.message);
           // If server fails to bind during initial start, reject promise
           if (!this.isListening) {
             reject(err);
@@ -118,7 +138,7 @@ export class WebSocketTelemetrySource implements TelemetrySource {
       this.wss?.close(() => {
         this.wss = null;
         this.isListening = false;
-        console.info('[WebSocketTelemetrySource] WebSocket server stopped and port released.');
+        console.info('[WS] WebSocket server stopped and port released.');
         resolve();
       });
     });
@@ -155,16 +175,31 @@ export class WebSocketTelemetrySource implements TelemetrySource {
   }
 
   public getStats(): WebSocketSourceStats {
+    const remoteAddr =
+      this.activeSocket && (this.activeSocket as unknown as { _socket?: { remoteAddress?: string } })._socket?.remoteAddress;
     return Object.freeze({
       serverListening: this.isListening,
       activeClientsCount: this.activeSocket !== null ? 1 : 0,
+      activeProducerAddress: this.activeSocket !== null ? (remoteAddr ?? '127.0.0.1') : null,
       totalConnectionsAccepted: this.stats.totalConnectionsAccepted,
       totalConnectionsRejected: this.stats.totalConnectionsRejected,
+      reconnectCount: this.stats.reconnectCount,
       messagesReceived: this.stats.messagesReceived,
+      messagesParsed: this.stats.messagesParsed,
+      messagesAdapted: this.stats.messagesAdapted,
       messagesDroppedOversized: this.stats.messagesDroppedOversized,
       messagesDroppedMalformedJson: this.stats.messagesDroppedMalformedJson,
+      messagesDroppedSchema: this.stats.messagesDroppedSchema,
       lastMessageTimestamp: this.stats.lastMessageTimestamp,
     });
+  }
+
+  public getAdapterDiagnostics(): AdapterDiagnostics {
+    return this.adapter.getDiagnostics();
+  }
+
+  public getAdapter(): CsiTelemetryAdapter {
+    return this.adapter;
   }
 
   private handleIncomingConnection(socket: WebSocket, remoteAddress?: string): void {
@@ -172,17 +207,21 @@ export class WebSocketTelemetrySource implements TelemetrySource {
     if (this.activeSocket !== null && this.activeSocket.readyState === WebSocket.OPEN) {
       this.stats.totalConnectionsRejected += 1;
       console.warn(
-        `[WebSocketTelemetrySource] Rejected connection from ${remoteAddress ?? 'unknown'}: Single client limit (${this.config.maxActiveClients}) reached.`
+        `[WS] Rejected connection from ${remoteAddress ?? 'unknown'}: Single client limit (${this.config.maxActiveClients}) reached.`
       );
       socket.close(4001, 'Another telemetry producer is already connected');
       return;
     }
 
+    if (this.stats.totalConnectionsAccepted > 0) {
+      this.stats.reconnectCount += 1;
+    }
+
     this.activeSocket = socket;
     this.stats.totalConnectionsAccepted += 1;
     this.setConnected(true);
-    console.info(
-      `[WebSocketTelemetrySource] Telemetry producer connected from ${remoteAddress ?? 'unknown'}.`
+    console.log(
+      `[WS] Producer connected from ${remoteAddress ?? '127.0.0.1'}`
     );
 
     socket.on('message', (rawData: RawData, isBinary: boolean) => {
@@ -203,10 +242,11 @@ export class WebSocketTelemetrySource implements TelemetrySource {
 
     // Determine payload byte length
     const byteLength = this.getRawDataLength(rawData);
+
     if (byteLength > this.config.maxMessageSizeBytes) {
       this.stats.messagesDroppedOversized += 1;
       console.warn(
-        `[WebSocketTelemetrySource] Dropped oversized frame: ${byteLength} bytes exceeds limit of ${this.config.maxMessageSizeBytes} bytes.`
+        `[WS] Packet rejected: ${byteLength} bytes exceeds limit of ${this.config.maxMessageSizeBytes} bytes.`
       );
       return;
     }
@@ -218,40 +258,70 @@ export class WebSocketTelemetrySource implements TelemetrySource {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
+      this.stats.messagesParsed += 1;
     } catch (err) {
       this.stats.messagesDroppedMalformedJson += 1;
       console.warn(
-        `[WebSocketTelemetrySource] Dropped malformed JSON packet: ${(err as Error).message}`
+        `[WS] Packet rejected: Malformed JSON - ${(err as Error).message}`
       );
       return;
     }
 
     if (!parsed || typeof parsed !== 'object') {
       this.stats.messagesDroppedMalformedJson += 1;
-      console.warn('[WebSocketTelemetrySource] Dropped non-object JSON payload.');
+      console.warn('[WS] Packet rejected: Non-object JSON payload');
       return;
     }
 
-    this.currentData = parsed;
+    const rawPkt = parsed as RawMicroESPectrePacket | Record<string, unknown>;
+    const seqNum =
+      typeof rawPkt.seq === 'number'
+        ? rawPkt.seq
+        : typeof rawPkt.sequence === 'number'
+        ? rawPkt.sequence
+        : null;
+
+    if (this.isDebug()) {
+      console.log(`[WS] Packet #${seqNum !== null ? seqNum : this.stats.messagesReceived}`);
+      console.log('[Parser] JSON OK');
+    }
+
+    // Adapt raw Micro-ESPectre packet into Master ICD RoverTelemetryEnvelope
+    const adapted = this.adapter.adapt(rawPkt);
+
+    if (!adapted) {
+      this.stats.messagesDroppedSchema += 1;
+      console.warn('[Adapter] Packet rejected by CsiTelemetryAdapter');
+      return;
+    }
+
+    this.stats.messagesAdapted += 1;
+    if (this.isDebug()) {
+      console.log(`[Adapter] Normalized (seq: ${seqNum})`);
+    }
+
+    this.currentData = adapted;
     this.stats.lastMessageTimestamp = Date.now();
-    this.notifyTelemetry(parsed);
+    this.notifyTelemetry(adapted);
   }
 
   private handleClientClose(socket: WebSocket, code: number, reason: string): void {
     if (this.activeSocket === socket) {
       this.activeSocket = null;
       this.setConnected(false);
-      console.info(
-        `[WebSocketTelemetrySource] Telemetry producer disconnected (code: ${code}, reason: "${reason || 'none'}"). Server remains active.`
+      console.log(
+        `[WS] Producer disconnected (code: ${code}, reason: "${reason || 'none'}")`
       );
+      console.info('[WS] Waiting for producer...');
     }
   }
 
   private handleClientError(socket: WebSocket, err: Error): void {
-    console.error('[WebSocketTelemetrySource] Client socket error:', err.message);
+    console.error('[WS] Producer socket error:', err.message);
     if (this.activeSocket === socket) {
       this.activeSocket = null;
       this.setConnected(false);
+      console.info('[WS] Waiting for producer...');
     }
   }
 

@@ -29,8 +29,8 @@ export interface WebSocketSourceConfig {
 }
 
 export const DEFAULT_WEBSOCKET_CONFIG: Readonly<WebSocketSourceConfig> = Object.freeze({
-  host: '127.0.0.1',
-  port: 8765,
+  host: (typeof process !== 'undefined' && process.env?.WS_HOST) || '127.0.0.1',
+  port: (typeof process !== 'undefined' && process.env?.WS_PORT) ? parseInt(process.env.WS_PORT, 10) : 8080,
   maxMessageSizeBytes: 65536, // 64 KB
   connectionTimeoutMs: 5000,
   heartbeatIntervalMs: 1000,
@@ -41,10 +41,15 @@ export const DEFAULT_WEBSOCKET_CONFIG: Readonly<WebSocketSourceConfig> = Object.
 export interface WebSocketSourceStats {
   readonly serverListening: boolean;
   readonly activeClientsCount: number;
+  readonly activeProducerAddress: string | null;
   readonly totalConnectionsAccepted: number;
   readonly totalConnectionsRejected: number;
+  readonly reconnectCount: number;
   readonly messagesReceived: number;
+  readonly messagesParsed: number;
+  readonly messagesAdapted: number;
   readonly messagesDroppedOversized: number;
   readonly messagesDroppedMalformedJson: number;
+  readonly messagesDroppedSchema: number;
   readonly lastMessageTimestamp: number;
 }

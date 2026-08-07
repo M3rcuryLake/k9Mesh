@@ -1,145 +1,144 @@
 #!/usr/bin/env python3
 """
-K9Mesh Python Telemetry Producer Test Harness
---------------------------------------------
-Simulates a live Python-based CSI detection pipeline streaming
-ICD-compliant JSON telemetry over a local WebSocket connection (ws://127.0.0.1:8765).
+K9Mesh Micro-ESPectre Live Telemetry Producer
+---------------------------------------------
+Transmits live deterministic Micro-ESPectre CSI transport packets
+to the K9Mesh Electron WebSocketTelemetrySource (ws://127.0.0.1:8080).
 
-Demonstrates:
-1. Valid nominal search telemetry stream
-2. Valid survivor detected telemetry stream (CSI respiration)
-3. Defensive malformed JSON packet rejection
-4. Defensive oversized packet rejection (>64KB)
-5. Clean client disconnect and autonomous reconnection
+Standard Backend Schema:
+{
+  "seq": 11708,
+  "timestamp_us": 959410021,
+  "channel": 5,
+  "rssi": -61,
+  "dropped": 6,
+  "band": [11, 13, 15, 17, 20, 22, 24, 26, 28, 46, 49, 51],
+  "mvs": {
+    "state": "motion",
+    "variance": 0.00029454899195013005,
+    "threshold": 0.00017719074199497816,
+    "confidence": 83.1163605484755
+  },
+  "ml": {
+    "ready": true,
+    "score": null,
+    "motion": null,
+    "enabled": false
+  }
+}
 """
 
+import argparse
 import asyncio
 import json
+import signal
+import sys
 import time
 import websockets
 
-WS_URI = "ws://127.0.0.1:8765"
+DEFAULT_WS_URI = "ws://127.0.0.1:8080"
 
 
-def create_base_packet(seq: int) -> dict:
+def generate_micro_espectre_packet(seq: int, motion_mode: bool = True) -> dict:
+    """Generates the authoritative Phase 10 Micro-ESPectre live sensing packet."""
+    now_us = int(time.time() * 1_000_000)
+    
     return {
-        "msg_type": "ROVER_TELEMETRY",
-        "protocol_version": "2.0.0",
-        "timestamp_epoch_ms": int(time.time() * 1000),
-        "sequence_id": seq,
-        "source_node": "ROVER_PRIME",
-        "telemetry": {
-            "radio": {
-                "linkQuality": "EXCELLENT",
-                "latency": 18,
-                "signalPercent": 92
-            },
-            "hardware": {
-                "stm32": "OK",
-                "esp32": "OK",
-                "mqtt": "OK",
-                "wifi": "OK",
-                "coreTemp": 39.4
-            },
-            "battery": {
-                "percent": 88,
-                "voltage": 7.92,
-                "estTime": "03:42:15",
-                "discharge": "NORMAL"
-            },
-            "csi": {
-                "breathingDetected": False,
-                "breathingRate": None,
-                "confidence": 0,
-                "state": "IDLE",
-                "arrayOnline": True,
-                "calibrated": True
-            },
-            "motion": {
-                "level": "LOW",
-                "lastEventSeconds": 142
-            },
-            "imu": {
-                "heading": 134.5,
-                "pitch": -2.1,
-                "roll": 0.8
-            },
-            "odometry": {
-                "speed": 0.35,
-                "distance": 42.8,
-                "motors": {
-                    "FL": 120,
-                    "FR": 120,
-                    "RL": 118,
-                    "RR": 119
-                }
-            },
-            "gps": {
-                "latitude": 37.7749,
-                "longitude": -122.4194
-            }
+        "seq": seq,
+        "timestamp_us": now_us,
+        "channel": 5,
+        "rssi": -61,
+        "dropped": 6,
+        "band": [11, 13, 15, 17, 20, 22, 24, 26, 28, 46, 49, 51],
+        "mvs": {
+            "state": "motion" if motion_mode else "stable",
+            "variance": 0.00029454899195013005 if motion_mode else 0.00004512398124,
+            "threshold": 0.00017719074199497816,
+            "confidence": 83.1163605484755 if motion_mode else 12.4501298412
+        },
+        "ml": {
+            "ready": True,
+            "score": None,
+            "motion": None,
+            "enabled": False
         }
     }
 
 
-async def run_producer_test():
-    print(f"[*] Connecting to K9Mesh WebSocket Telemetry Server at {WS_URI}...")
-    
+async def stream_telemetry(uri: str, rate_hz: float, max_count: int | None, motion_mode: bool):
+    interval_s = 1.0 / rate_hz
+    seq = 11708
+    running = True
+
+    print("==================================================================")
+    print(" K9Mesh Micro-ESPectre Live Telemetry Producer (Phase 10)")
+    print("==================================================================")
+    print(f"[*] Target WebSocket URI:  {uri}")
+    print(f"[*] Frequency:             {rate_hz} Hz ({interval_s * 1000:.1f} ms interval)")
+    print(f"[*] Motion State:          {'MOTION (83.1% Conf)' if motion_mode else 'STABLE (12.5% Conf)'}")
+    print(f"[*] Packet Target:         {max_count if max_count else 'Continuous Stream (Ctrl+C to exit)'}")
+    print("==================================================================\n")
+
+    while running:
+        try:
+            print(f"[*] Connecting to {uri}...")
+            async with websockets.connect(uri) as ws:
+                print(f"[+] Successfully connected to K9Mesh Ground Control Station!\n")
+                
+                while running:
+                    packet = generate_micro_espectre_packet(seq, motion_mode)
+                    payload = json.dumps(packet)
+                    await ws.send(payload)
+                    
+                    if seq % 10 == 8 or seq <= 11712:
+                        print(f"  -> [TX] Seq #{seq:05d} | State: {packet['mvs']['state']:<6} | Conf: {packet['mvs']['confidence']:.1f}% | RSSI: {packet['rssi']} dBm")
+                    
+                    seq += 1
+                    if max_count is not None and (seq - 11708) >= max_count:
+                        print(f"\n[+] Reached target packet count ({max_count}). Producer exiting cleanly.")
+                        return
+
+                    await asyncio.sleep(interval_s)
+
+        except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError) as e:
+            print(f"[-] Connection unavailable ({e.__class__.__name__}). Retrying in 1.0s...")
+            await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            print("\n[*] Received shutdown signal. Closing client.")
+            break
+        except Exception as e:
+            print(f"[-] Transport error: {e}. Retrying in 1.0s...")
+            await asyncio.sleep(1.0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="K9Mesh Micro-ESPectre Live Telemetry Producer")
+    parser.add_argument("--uri", default=DEFAULT_WS_URI, help="WebSocket URI (default: ws://127.0.0.1:8080)")
+    parser.add_argument("--rate-hz", type=float, default=10.0, help="Transmission frequency in Hz (default: 10.0)")
+    parser.add_argument("--count", type=int, default=None, help="Total packets to send before exit (default: continuous)")
+    parser.add_argument("--stable", action="store_true", help="Transmit stable (no motion) CSI telemetry")
+    args = parser.parse_args()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    task = loop.create_task(stream_telemetry(args.uri, args.rate_hz, args.count, not args.stable))
+
+    def handle_sigint():
+        print("\n[*] Termination requested (CTRL+C).")
+        task.cancel()
+
+    if sys.platform != "win32":
+        loop.add_signal_handler(signal.SIGINT, handle_sigint)
+        loop.add_signal_handler(signal.SIGTERM, handle_sigint)
+
     try:
-        async with websockets.connect(WS_URI) as ws:
-            print("[+] Connected to K9Mesh WebSocket Server successfully!")
-            
-            # --- Stage 1: Nominal Search Telemetry Stream ---
-            print("\n[Phase 1] Streaming Nominal Search Telemetry (5 packets @ 10 Hz)...")
-            for seq in range(1, 6):
-                pkt = create_base_packet(seq)
-                await ws.send(json.dumps(pkt))
-                print(f"  -> Sent Packet #{seq} (Heading: {pkt['telemetry']['imu']['heading']}°, Batt: {pkt['telemetry']['battery']['percent']}%)")
-                await asyncio.sleep(0.1)
-
-            # --- Stage 2: Survivor Detected Telemetry Stream ---
-            print("\n[Phase 2] Streaming Survivor Detection Telemetry (5 packets @ 10 Hz)...")
-            for seq in range(6, 11):
-                pkt = create_base_packet(seq)
-                pkt["telemetry"]["csi"]["breathingDetected"] = True
-                pkt["telemetry"]["csi"]["breathingRate"] = 16
-                pkt["telemetry"]["csi"]["confidence"] = 94
-                pkt["telemetry"]["csi"]["state"] = "STABLE"
-                pkt["telemetry"]["motion"]["level"] = "HIGH"
-                pkt["telemetry"]["motion"]["lastEventSeconds"] = 0
-                await ws.send(json.dumps(pkt))
-                print(f"  -> Sent Packet #{seq} [SURVIVOR DETECTED: 16 BPM, Conf: 94%]")
-                await asyncio.sleep(0.1)
-
-            # --- Stage 3: Malformed JSON Packet Test ---
-            print("\n[Phase 3] Injecting Malformed JSON (Testing Defensive Safe Boundary)...")
-            malformed_payload = '{"msg_type": "ROVER_TELEMETRY", "corrupted_syntax": ... INVALID JSON'
-            await ws.send(malformed_payload)
-            print("  -> Sent malformed frame. Server should discard safely without crashing.")
-            await asyncio.sleep(0.2)
-
-            # --- Stage 4: Oversized Frame Test ---
-            print("\n[Phase 4] Injecting Oversized Frame (>64KB limit test)...")
-            oversized_payload = json.dumps({"msg_type": "ROVER_TELEMETRY", "padding": "X" * 70000})
-            await ws.send(oversized_payload)
-            print("  -> Sent 70KB frame. Server should drop oversized packet safely.")
-            await asyncio.sleep(0.2)
-
-            # --- Stage 5: Resuming Valid Stream After Faults ---
-            print("\n[Phase 5] Resuming Valid Telemetry Stream...")
-            for seq in range(11, 14):
-                pkt = create_base_packet(seq)
-                await ws.send(json.dumps(pkt))
-                print(f"  -> Sent Recovery Packet #{seq}")
-                await asyncio.sleep(0.1)
-
-            print("\n[+] Test sequence completed. Closing connection.")
-
-    except ConnectionRefusedError:
-        print(f"[-] Connection refused: Ensure K9Mesh is running with WebSocketTelemetrySource active on {WS_URI}")
-    except Exception as e:
-        print(f"[-] Test failed with error: {e}")
+        loop.run_until_complete(task)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("[+] Telemetry producer terminated cleanly.")
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(run_producer_test())
+    main()

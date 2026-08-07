@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "lint": "oxlint",
     "package": "npm run build:app && electron-builder",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "integration:test": "npm run build:app && cross-env K9_INTEGRATION_TEST=1 electron . --integration-test",
+    "integration:verify": "node scratch/run_qualification_suite.js"
   },
   "build": {
     "appId": "com.k9mesh.commander",
