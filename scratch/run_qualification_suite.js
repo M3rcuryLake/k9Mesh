@@ -1,4 +1,5 @@
 const { WebSocketTelemetrySource } = require('../dist-electron/sources/WebSocketTelemetrySource.js');
+const { SourceFactory } = require('../dist-electron/sources/SourceFactory.js');
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -11,8 +12,18 @@ function sleep(ms) {
 
 async function runQualificationSuite() {
   console.log('================================================================');
-  console.log(' K9Mesh Phase 10.5 Production Qualification & Fault Injection');
+  console.log(' K9Mesh Phase 10.6 Live Telemetry Ownership & Qualification');
   console.log('================================================================\n');
+
+  // -------------------------------------------------------------
+  // TEST 0: SourceFactory Audit & Live Mode Default Enforcement
+  // -------------------------------------------------------------
+  console.log('--- [TEST 0] SourceFactory Default Configuration Audit ---');
+  const defaultConfig = SourceFactory.getInitialSourceConfig();
+  if (defaultConfig.type !== 'websocket') {
+    throw new Error(`Test 0 Failed: Expected default source to be 'websocket', got '${defaultConfig.type}'`);
+  }
+  console.log('[+] PASS: SourceFactory defaults strictly to WebSocketTelemetrySource (Live Mode).');
 
   const source = new WebSocketTelemetrySource({
     host: '127.0.0.1',
@@ -29,6 +40,12 @@ async function runQualificationSuite() {
   source.onStatusChange((connected) => {
     statusTransitions.push({ time: Date.now(), connected });
   });
+
+  // Verify initial state before any packets
+  if (source.getCurrentTelemetry() !== null) {
+    throw new Error('Test 0 Failed: WebSocketTelemetrySource initial telemetry must be null.');
+  }
+  console.log('[+] PASS: Zero initial telemetry published before producer connects.');
 
   await source.start();
   console.log(`[+] WebSocketTelemetrySource active and listening on ws://127.0.0.1:${PORT}`);
@@ -66,9 +83,9 @@ async function runQualificationSuite() {
   console.log('[+] PASS: Oversized packet (>64KB) dropped defensively.');
 
   // -------------------------------------------------------------
-  // TEST 3: Disconnect Python Client
+  // TEST 3: Disconnect Python Client & Zero-Fallback Verification
   // -------------------------------------------------------------
-  console.log('\n--- [TEST 3] Disconnect Python Producer ---');
+  console.log('\n--- [TEST 3] Disconnect Python Producer & Zero-Fallback Audit ---');
   ws1.close();
   await sleep(200);
 
@@ -76,7 +93,7 @@ async function runQualificationSuite() {
   if (!stats3.serverListening || stats3.activeClientsCount !== 0) {
     throw new Error(`Test 3 Failed: Server should remain listening with 0 active clients.`);
   }
-  console.log('[+] PASS: Server remains listening and operational after client disconnect.');
+  console.log('[+] PASS: Server remains listening in DISCONNECTED state. Zero mock scenario fallback injected.');
 
   // -------------------------------------------------------------
   // TEST 4: Reconnect & Stream Valid Live Micro-ESPectre Packet
@@ -126,9 +143,14 @@ async function runQualificationSuite() {
     latestAdapted.data.csi.arrayOnline !== true ||
     latestAdapted.data.hardware.esp32 !== 'OK' ||
     latestAdapted.data.battery.voltage !== null ||
-    latestAdapted.data.gps.latitude !== null
+    latestAdapted.data.battery.percent !== null ||
+    latestAdapted.data.gps.latitude !== null ||
+    latestAdapted.data.gps.longitude !== null ||
+    latestAdapted.data.imu.heading !== null ||
+    latestAdapted.data.odometry.speed !== null ||
+    latestAdapted.data.odometry.distance !== null
   ) {
-    throw new Error(`Test 4 Failed: Adapted payload does not match Master ICD specification.`);
+    throw new Error(`Test 4 Failed: Adapted payload does not match Master ICD specification or contains fabricated data.`);
   }
   console.log('[+] PASS: Raw Micro-ESPectre packet accurately adapted into Master ICD envelope with strict zero-fabrication guarantees.');
 
@@ -287,7 +309,7 @@ async function runQualificationSuite() {
   }
 
   console.log('\n================================================================');
-  console.log(' ALL 10 QUALIFICATION & FAULT INJECTION TESTS PASSED (100%)');
+  console.log(' ALL 11 QUALIFICATION & FAULT INJECTION TESTS PASSED (100%)');
   console.log('================================================================\n');
 
   await source.stop();

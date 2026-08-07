@@ -33,21 +33,24 @@ export class SourceFactory {
 
   /**
    * Resolves the startup source configuration from CLI arguments and environment variables.
-   * When K9_INTEGRATION_TEST=1 or --integration-test is present, selects 'websocket'.
+   * Defaults to 'websocket' (Live Mode on ws://127.0.0.1:8080).
+   * ScenarioSource is only activated when explicitly requested via K9_SCENARIO_MODE=1 or --scenario.
    */
   public static getInitialSourceConfig(): SourceFactoryOptions {
-    const isIntegrationMode =
-      process.env.K9_INTEGRATION_TEST === '1' ||
+    const isScenarioOptIn =
+      process.env.K9_SCENARIO_MODE === '1' ||
+      process.env.K9_DEV_SCENARIO === '1' ||
       (typeof process !== 'undefined' &&
         Array.isArray(process.argv) &&
-        process.argv.includes('--integration-test'));
+        process.argv.includes('--scenario'));
 
-    if (isIntegrationMode) {
-      console.info('[SourceFactory] Integration Test Mode active — configured WebSocket telemetry transport.');
-      return { type: 'websocket' };
+    if (isScenarioOptIn) {
+      console.info('[SourceFactory] Explicit Scenario/Dev Mode active — configured ScenarioSource.');
+      return { type: 'scenario', scenario: 'survivor_detected' };
     }
 
-    return { type: 'scenario', scenario: 'survivor_detected' };
+    console.info('[SourceFactory] Live Mode active (default) — configured WebSocket telemetry transport.');
+    return { type: 'websocket' };
   }
 
   /**
