@@ -1,0 +1,62 @@
+{
+  "scenarioName": "Nominal CSSR Search",
+  "description": "Baseline operational search scenario. Wi-Fi CSI array calibrated and online, rover navigating search grid, normal battery discharge, no survivor detected.",
+  "telemetry": {
+    "protocol_version": "1.0",
+    "msg_type": "TELEMETRY",
+    "timestamp_epoch_ms": 1785994074821,
+    "node_id": "k9-alpha-01",
+    "data": {
+      "radio": {
+        "linkQuality": "EXCELLENT",
+        "rssi": -45,
+        "latency": 15,
+        "signalPercent": 92
+      },
+      "hardware": {
+        "stm32": "OK",
+        "esp32": "OK",
+        "mqtt": "OK",
+        "wifi": "OK",
+        "coreTemp": 31.8
+      },
+      "battery": {
+        "percent": 84,
+        "voltage": 6.12,
+        "estTime": "01:34:18",
+        "discharge": "NORMAL"
+      },
+      "csi": {
+        "arrayOnline": true,
+        "calibrated": true,
+        "breathingDetected": false,
+        "breathingRate": null,
+        "confidence": null,
+        "state": "IDLE"
+      },
+      "motion": {
+        "level": "LOW",
+        "lastEventSeconds": 42
+      },
+      "gps": {
+        "latitude": null,
+        "longitude": null
+      },
+      "imu": {
+        "heading": 45.0,
+        "pitch": -1.5,
+        "roll": 0.5
+      },
+      "odometry": {
+        "speed": 0.42,
+        "distance": 18.5,
+        "motors": {
+          "FL": 120,
+          "FR": 120,
+          "RL": 120,
+          "RR": 120
+        }
+      }
+    }
+  }
+}
