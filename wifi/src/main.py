@@ -1,14 +1,3 @@
-"""
-Micro-ESPectre - Main Application
-
-Motion detection using WiFi CSI with MVS algorithm.
-Main entry point for the Micro-ESPectre system running on ESP32-C6.
-
-Author: Francesco Pace <francesco.pace@gmail.com>
-License: GPLv3
-"""
-
-from asyncio import sleep
 import struct
 import socket
 import network
@@ -22,7 +11,7 @@ import src.config as config
 # Gain lock configuration
 GAIN_LOCK_PACKETS = 300  # ~3 seconds at 100 Hz
 
-UDP_IP = "192.168.0.105"      # <-- DYNAMIC LATER
+UDP_IP = config.LOCAL_IP     # <-- DYNAMIC LATER
 UDP_PORT = 5005
 
 HEADER_FMT = "<IIHBB"
@@ -282,23 +271,14 @@ def main():
         raise RuntimeError("Failed to start traffic generator")
 
     run_gain_lock(wlan)
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
     DEST = (UDP_IP, UDP_PORT)
-
     print("Streaming to", DEST)
-
     HEADER_SIZE = struct.calcsize(HEADER_FMT)
-
     TX_SIZE = HEADER_SIZE + EXPECTED_CSI_LEN
-
     tx_buffer = bytearray(TX_SIZE)
 
-    tx_view = memoryview(tx_buffer)
-
     seq = 0
-
     ht57_remap_buffer = bytearray(EXPECTED_CSI_LEN)
 
     try:

@@ -32,9 +32,9 @@ class MVSDetector:
         window_size=5,
         gain_locked=False,
         hampel_enabled=True,
-        hampel_window=7,
-        hampel_threshold=15.0,
-        lowpass_enabled=False,
+        hampel_window=5,
+        hampel_threshold=6.0,
+        lowpass_enabled=True,
         lowpass_cutoff_hz=11.0,
         sample_rate_hz=100.0,
         motion_on_hits=1,
@@ -72,7 +72,7 @@ class MVSDetector:
             t = self.lowpass.filter(t)
         return t
 
-    def calibrate(self, baseline_packets, pct=95, factor=0.7):
+    def calibrate(self, baseline_packets, pct=95, factor=1.1):
         """
         factor=0.7 (vs stock 1.1) deliberately sets the threshold BELOW
         typical baseline noise. This is the main sensitivity lever --

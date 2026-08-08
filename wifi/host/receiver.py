@@ -12,10 +12,8 @@ HEADER_FMT. If you change one, change both.
 from dataclasses import dataclass, field
 from queue import Queue
 import math
+import socket
 import struct
-
-from scapy.all import sniff
-from scapy.layers.inet import UDP
 
 
 # seq(u32), timestamp_us(u32), channel(u16), rssi(i8 SIGNED), payload_len(u8)
@@ -73,15 +71,10 @@ class CSIReceiver:
         self.dropped = 0
         self.received = 0
 
-    def _handle_packet(self, pkt):
-        if UDP not in pkt:
-            return
+        self._sock = None
+        self._running = False
 
-        udp = pkt[UDP]
-        if udp.dport != self.port:
-            return
-
-        payload = bytes(udp.payload)
+    def _handle_datagram(self, payload):
         if len(payload) < HEADER_SIZE:
             return
 
@@ -112,14 +105,34 @@ class CSIReceiver:
             pass
 
     def start(self):
-        """Blocking sniff loop. Prefer AsyncSniffer + this as prn if you
-        need the main thread free (see main.py)."""
-        sniff(
-            iface=self.interface,
-            prn=self._handle_packet,
-            store=False,
-            filter=f"udp port {self.port}",
-        )
+        """Blocking UDP recv loop. Run in a background thread if you need
+        the main thread free (see main.py)."""
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if self.interface:
+            try:
+                self._sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
+                    self.interface.encode() + b"\0",
+                )
+            except (AttributeError, OSError) as e:
+                # SO_BINDTODEVICE is Linux-only and needs root; fall back to
+                # binding all interfaces if it's unavailable/unprivileged.
+                print(f"SO_BINDTODEVICE failed ({e}); binding 0.0.0.0 instead")
+        self._sock.bind(("0.0.0.0", self.port))
+
+        self._running = True
+        while self._running:
+            try:
+                payload, _addr = self._sock.recvfrom(65535)
+            except OSError:
+                break  # socket closed via stop()
+            self._handle_datagram(payload)
+
+    def stop(self):
+        self._running = False
+        if self._sock is not None:
+            self._sock.close()
 
     def recv(self, timeout=None):
         return self.queue.get(timeout=timeout)

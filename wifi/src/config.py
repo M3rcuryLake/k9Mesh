@@ -9,17 +9,10 @@ import sys
 # WiFi Configuration
 WIFI_SSID = "YourSSID"
 WIFI_PASSWORD = "YourPassword"
+LOCAL_IP = "192.168.x.x"
 # Optional AP lock for mesh/repeater environments.
 # Format: "AA:BB:CC:DD:EE:FF" (or without separators).
 # WIFI_BSSID = "AA:BB:CC:DD:EE:FF"
-
-# MQTT Configuration
-MQTT_BROKER = "homeassistant.local"  # Your MQTT broker IP
-MQTT_PORT = 1883
-MQTT_CLIENT_ID = "micro-espectre"
-MQTT_TOPIC = "home/espectre/node1"
-MQTT_USERNAME = "mqtt"
-MQTT_PASSWORD = "mqtt"
 
 # Traffic Generator Configuration
 # Generates WiFi traffic to ensure continuous CSI data
@@ -69,14 +62,14 @@ SEG_WINDOW_SIZE_MAX = 200     # Maximum window size
 CALIBRATION_BUFFER_SIZE = CALIBRATION_NUM_WINDOWS * SEG_WINDOW_SIZE
 
 # Low-pass filter (removes high-frequency noise, reduces false positives)
-ENABLE_LOWPASS_FILTER = False   # Recommended: reduces FP in noisy environments
+ENABLE_LOWPASS_FILTER = True   # Recommended: reduces FP in noisy environments
 LOWPASS_CUTOFF = 11.0          # Cutoff frequency in Hz (11 Hz: 2.3% FP, 92.4% Recall)
                                # Human movement is typically 0.5-10 Hz, RF noise is >15 Hz
 
 # Hampel filter (removes outliers/spikes in turbulence)
 ENABLE_HAMPEL_FILTER = True    # Enable/disable Hampel outlier filter (spikes in turbulence)
-HAMPEL_WINDOW = 7             # Window size for median calculation (3-11)
-HAMPEL_THRESHOLD = 5.0        # Outlier detection threshold in MAD units (2.0-6.0 recommended)
+HAMPEL_WINDOW = 5             # Window size for median calculation (3-11)
+HAMPEL_THRESHOLD = 6.0        # Outlier detection threshold in MAD units (2.0-6.0 recommended)
                               # Higher values = less aggressive filtering
 
 # HT20 Constants (64 subcarriers - do not change)

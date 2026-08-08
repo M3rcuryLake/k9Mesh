@@ -26,9 +26,9 @@ import argparse
 import time
 import math
 import json
+import threading
 from pathlib import Path
 from queue import Empty
-from scapy.all import AsyncSniffer
 import websocket
 from receiver import CSIReceiver
 from csi_dsp import DEFAULT_BAND
@@ -76,9 +76,16 @@ def run_calibration(rx, duration_s, window_size):
     Returns (band, mvs_detector) - band is NBVI-selected if it succeeds,
     otherwise DEFAULT_BAND (matching upstream's documented fallback).
     """
-    print(f"\n{'-'*60}")
-    print(f"Calibration: keep the room EMPTY AND STILL for {duration_s:.0f}s")
-    print(f"{'-'*60}")
+    print("Waiting for stream to stabilize (first few packets of this session)...\n")
+
+    n_seen = 0
+    while n_seen < 50:
+        try:
+            rx.recv(timeout=1.0)
+        except Empty:
+            continue
+        n_seen += 1
+    print(f"Calibration phase for next {duration_s:.0f}s\n")
 
     baseline_frames = []
     t_end = time.time() + duration_s
@@ -142,14 +149,9 @@ def main():
                           "MVS reports variance only (no motion flag)")
     args = ap.parse_args()
 
-    rx = CSIReceiver(interface=args.interface, port=args.port, queue_size=8192)
-    sniffer = AsyncSniffer(
-        iface=args.interface,
-        filter=f"udp port {args.port}",
-        prn=rx._handle_packet,
-        store=False,
-    )
-    sniffer.start()
+    rx = CSIReceiver(interface=args.interface, port=args.port)
+    rx_thread = threading.Thread(target=rx.start, daemon=True)
+    rx_thread.start()
     print(f"Listening for CSI on {args.interface}:{args.port} ...")
 
     if args.skip_calibration:
@@ -196,7 +198,7 @@ def main():
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
-        sniffer.stop()
+        rx.stop()
         ws.close()
         print(f"Total packets: {n_packets}, dropped: {rx.dropped}")
 
