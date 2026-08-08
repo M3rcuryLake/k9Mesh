@@ -76,16 +76,12 @@ def get_windows_wifi():
         return None
 
     ssid = None
-    bssid = None
 
     for line in output.splitlines():
         line = line.strip()
 
         if line.startswith("SSID") and not line.startswith("BSSID"):
             ssid = line.split(":", 1)[1].strip()
-
-        elif line.startswith("BSSID"):
-            bssid = line.split(":", 1)[1].strip()
 
     if not ssid:
         return None
@@ -107,7 +103,6 @@ def get_windows_wifi():
 
     return {
         "ssid": ssid,
-        "bssid": bssid,
         "password": password,
         "local_ip": get_local_ip()
     }
@@ -115,10 +110,6 @@ def get_windows_wifi():
 
 def get_linux_wifi():
     """Get currently connected Wi-Fi information on Linux."""
-
-    # ---------------------------------------------------------
-    # 1. Find the active Wi-Fi interface
-    # ---------------------------------------------------------
 
     device_output = run_command([
         "nmcli",
@@ -147,10 +138,6 @@ def get_linux_wifi():
 
     if not wifi_device:
         return None
-
-    # ---------------------------------------------------------
-    # 2. Get SSID and BSSID directly from active device
-    # ---------------------------------------------------------
 
     wifi_info = run_command([
         "nmcli",
@@ -183,51 +170,6 @@ def get_linux_wifi():
         connection
     ])
 
-    # ---------------------------------------------------------
-    # 3. Get BSSID from the ACTIVE Wi-Fi association
-    # ---------------------------------------------------------
-
-    bssid = run_command([
-        "nmcli",
-        "-g",
-        "GENERAL.HWADDR",
-        "device",
-        "show",
-        wifi_device
-    ])
-
-    # HWADDR is the adapter MAC, NOT the AP BSSID.
-    # Therefore get the actual associated AP BSSID using
-    # nmcli's active Wi-Fi list.
-
-    active_wifi = run_command([
-        "nmcli",
-        "-t",
-        "-f",
-        "IN-USE,SSID,BSSID",
-        "device",
-        "wifi",
-        "list",
-        "ifname",
-        wifi_device
-    ])
-
-    bssid = None
-
-    if active_wifi:
-        for line in active_wifi.splitlines():
-
-            if line.startswith("*:"):
-                parts = line.split(":", 2)
-
-                if len(parts) == 3:
-                    bssid = parts[2].replace("\\:", ":")
-                    break
-
-    # ---------------------------------------------------------
-    # 4. Get saved Wi-Fi password
-    # ---------------------------------------------------------
-
     password = run_command([
         "nmcli",
         "-s",
@@ -238,19 +180,13 @@ def get_linux_wifi():
         connection
     ])
 
-    # ---------------------------------------------------------
-    # 5. Get local IP
-    # ---------------------------------------------------------
-
     local_ip = get_local_ip()
 
     return {
         "ssid": ssid,
-        "bssid": bssid,
         "password": password,
         "local_ip": local_ip
     }
-
 
 def get_wifi_info():
     """Automatically detect operating system."""
@@ -776,7 +712,6 @@ Examples:
             sys.exit(1)
         conf = f'''# WiFi Configuration
 WIFI_SSID = "{info['ssid']}"
-# Optional AP lock (helps on mesh networks)
 WIFI_PASSWORD = "{info['password']}"
 LOCAL_IP = "{info['local_ip']}"
 '''

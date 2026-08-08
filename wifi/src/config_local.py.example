@@ -1,6 +1,4 @@
 # WiFi Configuration
 WIFI_SSID = None
 WIFI_PASSWORD = None
-# Optional AP lock (helps on mesh networks)
-WIFI_BSSID = None
 LOCAL_IP = None

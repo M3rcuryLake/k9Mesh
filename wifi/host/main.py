@@ -174,7 +174,7 @@ def main():
         global ws          # <-- add this line
 
         try:
-            ws = websocket.create_connection("ws://localhost:8080")
+            ws = websocket.create_connection("ws://127.0.0.1:8080")
         except Exception as e:
             print(f"WebSocket connect failed: {e}")
 
