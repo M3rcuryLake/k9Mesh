@@ -181,6 +181,8 @@ export class CsiTelemetryAdapter
             rssi,
             latency: null, // Latency is not measured in raw CSI packet
             signalPercent,
+            channel: typeof pkt.channel === 'number' ? pkt.channel : null,
+            dropped: typeof pkt.dropped === 'number' ? pkt.dropped : null,
           },
           hardware: {
             stm32: null, // STM32 status not reported by ESP32 CSI sensor alone
@@ -211,6 +213,8 @@ export class CsiTelemetryAdapter
               typeof pkt.last_motion_event_seconds === 'number'
                 ? pkt.last_motion_event_seconds
                 : null,
+            variance: typeof pkt.mvs?.variance === 'number' ? pkt.mvs.variance : null,
+            threshold: typeof pkt.mvs?.threshold === 'number' ? pkt.mvs.threshold : null,
           },
           gps: {
             latitude: typeof pkt.gps_lat === 'number' ? pkt.gps_lat : null,

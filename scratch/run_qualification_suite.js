@@ -308,8 +308,46 @@ async function runQualificationSuite() {
     throw new Error(`Test 10 Failed: Expected at least 300 adapted packets, got ${finalDiag.packetsAdapted}`);
   }
 
+  // -------------------------------------------------------------
+  // TEST 11: Demo State Mutation Validation (Backend/Pipeline)
+  // -------------------------------------------------------------
+  console.log('\n--- [TEST 11] Demo State Mutation Validation (Backend/Pipeline) ---');
+  const wsDemo = new WebSocket(`ws://127.0.0.1:${PORT}`);
+  await new Promise((res) => wsDemo.on('open', res));
+
+  // Simulating STATE 2 from test_live_backend.py --demo
+  const demoState2 = {
+    seq: 99999,
+    timestamp_us: 1000000,
+    rssi: -40,
+    channel: 11,
+    dropped: 2,
+    band: [],
+    mvs: { state: 'motion', variance: 0.0080, threshold: 0.0030, confidence: 65.0 },
+    ml: { ready: true, enabled: true }
+  };
+  
+  wsDemo.send(JSON.stringify(demoState2));
+  await sleep(200);
+
+  const demoAdapted = receivedAdaptedPackets[receivedAdaptedPackets.length - 1];
+  if (
+    demoAdapted.data.radio.rssi !== -40 ||
+    demoAdapted.data.radio.channel !== 11 ||
+    demoAdapted.data.radio.dropped !== 2 ||
+    demoAdapted.data.motion.variance !== 0.0080 ||
+    demoAdapted.data.motion.threshold !== 0.0030 ||
+    demoAdapted.data.csi.confidence !== 65.0
+  ) {
+    throw new Error('Test 11 Failed: Demo State 2 payload did not propagate correctly through the backend pipeline.');
+  }
+  
+  console.log('[+] PASS: Demo State 2 explicitly mapped into renderer-ready ICD payload.');
+  wsDemo.close();
+  await sleep(200);
+
   console.log('\n================================================================');
-  console.log(' ALL 11 QUALIFICATION & FAULT INJECTION TESTS PASSED (100%)');
+  console.log(' ALL 12 QUALIFICATION & FAULT INJECTION TESTS PASSED (100%)');
   console.log('================================================================\n');
 
   await source.stop();

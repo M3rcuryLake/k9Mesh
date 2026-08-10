@@ -282,8 +282,8 @@ export class WebSocketTelemetrySource implements TelemetrySource {
         : null;
 
     if (this.isDebug()) {
-      console.log(`[WS] Packet #${seqNum !== null ? seqNum : this.stats.messagesReceived}`);
-      console.log('[Parser] JSON OK');
+      console.log(`[WS] Packet received (#${seqNum !== null ? seqNum : this.stats.messagesReceived})`);
+      console.log('[Parser] JSON parsed');
     }
 
     // Adapt raw Micro-ESPectre packet into Master ICD RoverTelemetryEnvelope
@@ -297,7 +297,7 @@ export class WebSocketTelemetrySource implements TelemetrySource {
 
     this.stats.messagesAdapted += 1;
     if (this.isDebug()) {
-      console.log(`[Adapter] Normalized (seq: ${seqNum})`);
+      console.log(`[Adapter] Packet normalized`);
     }
 
     this.currentData = adapted;

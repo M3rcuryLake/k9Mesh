@@ -239,7 +239,7 @@ export class TelemetryHost {
 
       this.runtimeStatus.packetsValidated += 1;
       if (this.isDebug()) {
-        console.log('[Validator] Accepted');
+        console.log('[Validator] Packet accepted');
       }
 
       if (result.warnings.length > 0) {
@@ -265,7 +265,8 @@ export class TelemetryHost {
 
       this.runtimeStatus.packetsPublished += 1;
       if (this.isDebug()) {
-        console.log(`[Host] Published (dispatch time: ${ipcDurationMs}ms)`);
+        console.log(`[Host] Telemetry published`);
+        console.log(`[IPC] Telemetry dispatched (${ipcDurationMs}ms)`);
       }
     });
 

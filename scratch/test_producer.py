@@ -48,19 +48,21 @@ def generate_micro_espectre_packet(seq: int, motion_mode: bool = True) -> dict:
         "timestamp_us": now_us,
         "channel": 5,
         "rssi": -61,
-        "dropped": 6,
+        "channel": 11,
+        "rssi": -30,
+        "dropped": 4,
         "band": [11, 13, 15, 17, 20, 22, 24, 26, 28, 46, 49, 51],
         "mvs": {
-            "state": "motion" if motion_mode else "stable",
-            "variance": 0.00029454899195013005 if motion_mode else 0.00004512398124,
-            "threshold": 0.00017719074199497816,
-            "confidence": 83.1163605484755 if motion_mode else 12.4501298412
+            "state": "STABLE",
+            "variance": 0.0055,
+            "threshold": 0.0011,
+            "confidence": "99.8877"
         },
         "ml": {
             "ready": True,
             "score": None,
             "motion": None,
-            "enabled": False
+            "enabled": True
         }
     }
 

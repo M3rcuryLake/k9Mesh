@@ -9,6 +9,8 @@ export const NULL_TELEMETRY: RoverTelemetry = {
     rssi: null,
     latency: null,
     signalPercent: null,
+    channel: null,
+    dropped: null,
   },
   hardware: {
     stm32: null,
@@ -34,6 +36,8 @@ export const NULL_TELEMETRY: RoverTelemetry = {
   motion: {
     level: null,
     lastEventSeconds: null,
+    variance: null,
+    threshold: null,
   },
   gps: {
     latitude: null,
@@ -92,6 +96,8 @@ export class TelemetryMapper {
         rssi: data?.radio?.rssi ?? null,
         latency: data?.radio?.latency ?? null,
         signalPercent: data?.radio?.signalPercent ?? null,
+        channel: data?.radio?.channel ?? null,
+        dropped: data?.radio?.dropped ?? null,
       },
       hardware: {
         stm32: data?.hardware?.stm32 ?? null,
@@ -117,6 +123,8 @@ export class TelemetryMapper {
       motion: {
         level: data?.motion?.level ?? null,
         lastEventSeconds: data?.motion?.lastEventSeconds ?? null,
+        variance: data?.motion?.variance ?? null,
+        threshold: data?.motion?.threshold ?? null,
       },
       gps: {
         latitude: data?.gps?.latitude ?? null,

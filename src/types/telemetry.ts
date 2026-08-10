@@ -4,6 +4,8 @@ export interface RadioTelemetry {
   rssi: number | null;
   latency: number | null;
   signalPercent: number | null;
+  channel: number | null;
+  dropped: number | null;
 }
 
 /** e.g. status values: "OK" | "FAULT" | "OFFLINE" */
@@ -43,6 +45,8 @@ export type MotionLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 export interface MotionTelemetry {
   level: MotionLevel | null;
   lastEventSeconds: number | null;
+  variance: number | null;
+  threshold: number | null;
 }
 
 export interface GpsTelemetry {

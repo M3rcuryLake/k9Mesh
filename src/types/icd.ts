@@ -8,6 +8,8 @@ export interface ICDRadioTelemetry {
   rssi: number | null;
   latency: number | null;
   signalPercent: number | null;
+  channel: number | null;
+  dropped: number | null;
 }
 
 export interface ICDHardwareTelemetry {
@@ -37,6 +39,8 @@ export interface ICDCsiTelemetry {
 export interface ICDMotionTelemetry {
   level: 'LOW' | 'MEDIUM' | 'HIGH' | null;
   lastEventSeconds: number | null;
+  variance: number | null;
+  threshold: number | null;
 }
 
 export interface ICDGpsTelemetry {
