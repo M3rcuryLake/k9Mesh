@@ -58,6 +58,13 @@ export const NULL_TELEMETRY: RoverTelemetry = {
       RR: null,
     },
   },
+  ml: {
+    ready: null,
+    enabled: null,
+    score: null,
+    motion: null,
+    classification: null,
+  },
 };
 
 /**
@@ -144,6 +151,13 @@ export class TelemetryMapper {
           RL: data?.odometry?.motors?.RL ?? null,
           RR: data?.odometry?.motors?.RR ?? null,
         },
+      },
+      ml: {
+        ready: data?.ml?.ready ?? null,
+        enabled: data?.ml?.enabled ?? null,
+        score: data?.ml?.score ?? null,
+        motion: data?.ml?.motion ?? null,
+        classification: data?.ml?.classification ?? null,
       },
     };
   }

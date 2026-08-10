@@ -62,18 +62,19 @@ export class SystemHealthManager {
     }
     this.lastPacketTimestamp = now;
 
-    // Extract packet epoch if available to compute transit age
+    // Extract explicitly documented host-receipt timestamp to avoid upstream
+    // contract ambiguity (uptime vs epoch).
     if (raw && typeof raw === 'object') {
       const obj = raw as Record<string, unknown>;
-      const epoch =
-        typeof obj.timestamp_epoch_ms === 'number'
-          ? obj.timestamp_epoch_ms
-          : typeof obj.timestamp === 'number'
-          ? obj.timestamp
+      const hostReceipt = typeof obj.host_receipt_time_ms === 'number'
+          ? obj.host_receipt_time_ms
           : null;
 
-      if (epoch !== null && epoch > 0) {
-        this.lastPacketAgeMs = Math.max(0, now - epoch);
+      if (hostReceipt !== null && hostReceipt > 0) {
+        this.lastPacketAgeMs = Math.max(0, now - hostReceipt);
+      } else {
+        // Fallback for older envelopes that lack host_receipt_time_ms
+        this.lastPacketAgeMs = Math.max(0, now - this.lastPacketTimestamp);
       }
     }
 

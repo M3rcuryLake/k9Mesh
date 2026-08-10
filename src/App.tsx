@@ -6,8 +6,8 @@ import { useTelemetry } from './hooks/useTelemetry'
 import Header from './components/Header'
 import BreathingPanel from './components/BreathingPanel'
 import MotionPanel from './components/MotionPanel'
-import TerrainPanel from './components/TerrainPanel'
-import DeadReckoningPanel from './components/DeadReckoningPanel'
+import MlClassificationPanel from './components/MlClassificationPanel'
+import OperationalMap from './components/OperationalMap'
 import BottomBar from './components/BottomBar'
 import BatteryPanel from './components/BatteryPanel'
 import HardwarePanel from './components/HardwarePanel'
@@ -63,7 +63,7 @@ export default function App() {
           </div>
           {/* Terrain (~22%) */}
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <TerrainPanel />
+            <MlClassificationPanel ml={telemetry.ml} />
           </div>
         </div>
 
@@ -76,10 +76,9 @@ export default function App() {
           minHeight: 0,
           overflow: 'hidden',
         }}>
-          <DeadReckoningPanel
+          <OperationalMap
             gps={telemetry.gps}
-            imu={telemetry.imu}
-            odometry={telemetry.odometry}
+            csi={telemetry.csi}
           />
           <BottomBar odometry={telemetry.odometry} />
         </div>

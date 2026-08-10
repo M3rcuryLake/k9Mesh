@@ -56,7 +56,7 @@ def generate_micro_espectre_packet(seq: int, motion_mode: bool = True) -> dict:
             "state": "STABLE",
             "variance": 0.0055,
             "threshold": 0.0011,
-            "confidence": "99.8877"
+            "confidence": 99.8877
         },
         "ml": {
             "ready": True,

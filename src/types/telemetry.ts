@@ -73,6 +73,14 @@ export interface OdometryTelemetry {
   motors: MotorsTelemetry;
 }
 
+export interface MlTelemetry {
+  ready: boolean | null;
+  enabled: boolean | null;
+  score: number | null;
+  motion: boolean | null;
+  classification: { t: number; x: number; y: number }[] | null;
+}
+
 /**
  * Complete telemetry model for the K9Mesh rover.
  * Null on any field = sensor data not yet received.
@@ -90,4 +98,5 @@ export interface RoverTelemetry {
   gps: GpsTelemetry;
   imu: ImuTelemetry;
   odometry: OdometryTelemetry;
+  ml: MlTelemetry;
 }

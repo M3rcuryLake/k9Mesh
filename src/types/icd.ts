@@ -67,6 +67,14 @@ export interface ICDOdometryTelemetry {
   motors: ICDMotorsTelemetry;
 }
 
+export interface ICDMlTelemetry {
+  ready: boolean | null;
+  enabled: boolean | null;
+  score: number | null;
+  motion: boolean | null;
+  classification: { t: number; x: number; y: number }[] | null;
+}
+
 export interface ICDRoverTelemetryData {
   radio: ICDRadioTelemetry;
   hardware: ICDHardwareTelemetry;
@@ -76,6 +84,7 @@ export interface ICDRoverTelemetryData {
   gps: ICDGpsTelemetry;
   imu: ICDImuTelemetry;
   odometry: ICDOdometryTelemetry;
+  ml: ICDMlTelemetry;
 }
 
 export interface ICDTelemetryMessage {
