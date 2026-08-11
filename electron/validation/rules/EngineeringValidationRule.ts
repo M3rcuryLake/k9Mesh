@@ -104,6 +104,20 @@ export class EngineeringValidationRule implements ValidationRule {
       this.checkRange(issues, 'hardware.coreTemp', h.coreTemp, -40.0, 85.0);
     }
 
+    // 8. ML Classification Limits
+    if (data.ml) {
+      const ml = data.ml;
+      this.checkRange(issues, 'ml.score', ml.score, 0.0, 1.0);
+      
+      if (Array.isArray(ml.classification)) {
+        ml.classification.forEach((pt: any, index: number) => {
+          this.checkRange(issues, `ml.classification[${index}].t`, pt.t, 0.0, 1.0);
+          this.checkRange(issues, `ml.classification[${index}].x`, pt.x, 0.0, 1.0);
+          this.checkRange(issues, `ml.classification[${index}].y`, pt.y, 0.0, 1.0);
+        });
+      }
+    }
+
     return issues;
   }
 

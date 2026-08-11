@@ -9,6 +9,8 @@ export const NULL_TELEMETRY: RoverTelemetry = {
     rssi: null,
     latency: null,
     signalPercent: null,
+    channel: null,
+    dropped: null,
   },
   hardware: {
     stm32: null,
@@ -34,6 +36,8 @@ export const NULL_TELEMETRY: RoverTelemetry = {
   motion: {
     level: null,
     lastEventSeconds: null,
+    variance: null,
+    threshold: null,
   },
   gps: {
     latitude: null,
@@ -53,6 +57,13 @@ export const NULL_TELEMETRY: RoverTelemetry = {
       RL: null,
       RR: null,
     },
+  },
+  ml: {
+    ready: null,
+    enabled: null,
+    score: null,
+    motion: null,
+    classification: null,
   },
 };
 
@@ -92,6 +103,8 @@ export class TelemetryMapper {
         rssi: data?.radio?.rssi ?? null,
         latency: data?.radio?.latency ?? null,
         signalPercent: data?.radio?.signalPercent ?? null,
+        channel: data?.radio?.channel ?? null,
+        dropped: data?.radio?.dropped ?? null,
       },
       hardware: {
         stm32: data?.hardware?.stm32 ?? null,
@@ -117,6 +130,8 @@ export class TelemetryMapper {
       motion: {
         level: data?.motion?.level ?? null,
         lastEventSeconds: data?.motion?.lastEventSeconds ?? null,
+        variance: data?.motion?.variance ?? null,
+        threshold: data?.motion?.threshold ?? null,
       },
       gps: {
         latitude: data?.gps?.latitude ?? null,
@@ -136,6 +151,13 @@ export class TelemetryMapper {
           RL: data?.odometry?.motors?.RL ?? null,
           RR: data?.odometry?.motors?.RR ?? null,
         },
+      },
+      ml: {
+        ready: data?.ml?.ready ?? null,
+        enabled: data?.ml?.enabled ?? null,
+        score: data?.ml?.score ?? null,
+        motion: data?.ml?.motion ?? null,
+        classification: data?.ml?.classification ?? null,
       },
     };
   }

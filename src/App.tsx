@@ -1,55 +1,107 @@
 import './index.css'
-import type { RoverTelemetry } from './types/telemetry'
-import SystemVitals from './components/SystemVitals'
-import CSISurvivorDetection from './components/CSISurvivorDetection'
-import MotionDetector from './components/MotionDetector'
-import GpsNav from './components/GpsNav'
-import HeadingIMU from './components/HeadingIMU'
-import Odometry from './components/Odometry'
-
 import { useMemo } from 'react'
 import { TelemetryProviderFactory } from './providers/TelemetryProviderFactory'
 import { useTelemetry } from './hooks/useTelemetry'
 
+import Header from './components/Header'
+import BreathingPanel from './components/BreathingPanel'
+import MotionPanel from './components/MotionPanel'
+import MlClassificationPanel from './components/MlClassificationPanel'
+import OperationalMap from './components/OperationalMap'
+import BottomBar from './components/BottomBar'
+import BatteryPanel from './components/BatteryPanel'
+import HardwarePanel from './components/HardwarePanel'
+import CommsPanel from './components/CommsPanel'
+
 export default function App() {
   const provider = useMemo(
-    () =>
-      TelemetryProviderFactory.create('auto', {
-        json: { initialScenario: 'survivor_detected' },
-      }),
+    () => TelemetryProviderFactory.create('auto'),
     []
   )
-
-  const { telemetry } = useTelemetry(provider)
+  const { telemetry, status } = useTelemetry(provider)
 
   return (
-    <div className="bg-black text-green font-mono text-[11px] min-h-screen p-[10px] flex flex-col gap-2">
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      overflow: 'hidden',
+      background: 'var(--navy)',
+      fontFamily: "'Courier New', Courier, monospace",
+      fontSize: 11,
+      color: 'var(--cyan)',
+    }}>
+      {/* ── Header ───────────────────────────────────────────── */}
+      <Header radio={telemetry.radio} status={status} />
 
-      {/* Header */}
-      <div className="text-center text-[22px] font-bold tracking-[8px] py-2">
-        K9MESH
+      {/* ── Main area ─────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex',
+        flex: 1,
+        gap: 4,
+        padding: 4,
+        overflow: 'hidden',
+        minHeight: 0,
+      }}>
+
+        {/* LEFT COLUMN — Breathing | Motion | Terrain */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          width: '27%',
+          gap: 4,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}>
+          {/* Breathing — tallest (~45%) */}
+          <div style={{ flex: '0 0 43%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <BreathingPanel csi={telemetry.csi} />
+          </div>
+          {/* Motion (~35%) */}
+          <div style={{ flex: '0 0 35%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <MotionPanel motion={telemetry.motion} />
+          </div>
+          {/* Terrain (~22%) */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <MlClassificationPanel ml={telemetry.ml} />
+          </div>
+        </div>
+
+        {/* CENTER COLUMN — Dead Reckoning + Bottom Bar */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          gap: 0,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}>
+          <OperationalMap
+            gps={telemetry.gps}
+            csi={telemetry.csi}
+          />
+          <BottomBar odometry={telemetry.odometry} />
+        </div>
+
+        {/* RIGHT COLUMN — Battery | Hardware | Comms */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          width: '22%',
+          gap: 4,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}>
+          {/* Battery */}
+          <BatteryPanel battery={telemetry.battery} />
+          {/* Hardware — expands to fill */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <HardwarePanel hardware={telemetry.hardware} />
+          </div>
+          {/* Comms */}
+          <CommsPanel radio={telemetry.radio} />
+        </div>
       </div>
-
-      {/* Row 1 — System Vitals */}
-      <SystemVitals
-        radio={telemetry.radio}
-        hardware={telemetry.hardware}
-        battery={telemetry.battery}
-      />
-
-      {/* Row 2 — CSI | Motion | GPS */}
-      <div className="grid grid-cols-[2fr_1fr_1fr] gap-2">
-        <CSISurvivorDetection csi={telemetry.csi} />
-        <MotionDetector motion={telemetry.motion} />
-        <GpsNav gps={telemetry.gps} />
-      </div>
-
-      {/* Row 3 — Heading/IMU | Odometry */}
-      <div className="grid grid-cols-2 gap-2">
-        <HeadingIMU imu={telemetry.imu} />
-        <Odometry odometry={telemetry.odometry} />
-      </div>
-
     </div>
   )
 }

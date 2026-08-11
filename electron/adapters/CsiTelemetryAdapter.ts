@@ -174,6 +174,7 @@ export class CsiTelemetryAdapter
         protocol_version: '1.0',
         msg_type: 'TELEMETRY',
         timestamp_epoch_ms: epoch,
+        host_receipt_time_ms: Date.now(),
         node_id: nodeId,
         data: {
           radio: {
@@ -181,6 +182,8 @@ export class CsiTelemetryAdapter
             rssi,
             latency: null, // Latency is not measured in raw CSI packet
             signalPercent,
+            channel: typeof pkt.channel === 'number' ? pkt.channel : null,
+            dropped: typeof pkt.dropped === 'number' ? pkt.dropped : null,
           },
           hardware: {
             stm32: null, // STM32 status not reported by ESP32 CSI sensor alone
@@ -211,6 +214,8 @@ export class CsiTelemetryAdapter
               typeof pkt.last_motion_event_seconds === 'number'
                 ? pkt.last_motion_event_seconds
                 : null,
+            variance: typeof pkt.mvs?.variance === 'number' ? pkt.mvs.variance : null,
+            threshold: typeof pkt.mvs?.threshold === 'number' ? pkt.mvs.threshold : null,
           },
           gps: {
             latitude: typeof pkt.gps_lat === 'number' ? pkt.gps_lat : null,
@@ -230,6 +235,17 @@ export class CsiTelemetryAdapter
               RL: typeof pkt.rpm_rl === 'number' ? pkt.rpm_rl : null,
               RR: typeof pkt.rpm_rr === 'number' ? pkt.rpm_rr : null,
             },
+          },
+          ml: {
+            ready: typeof pkt.ml?.ready === 'boolean' ? pkt.ml.ready : null,
+            enabled: typeof pkt.ml?.enabled === 'boolean' ? pkt.ml.enabled : null,
+            score: typeof pkt.ml?.score === 'number' ? pkt.ml.score : null,
+            motion: typeof pkt.ml?.motion === 'boolean' ? pkt.ml.motion : null,
+            classification: Array.isArray(pkt.ml?.classification)
+              ? pkt.ml.classification.filter(
+                  (pt) => typeof pt.t === 'number' && typeof pt.x === 'number' && typeof pt.y === 'number'
+                )
+              : null,
           },
         },
       };
@@ -255,12 +271,12 @@ export class CsiTelemetryAdapter
   /**
    * Converts incoming microsecond timestamp into epoch milliseconds.
    *
-   * TODO(hardware-team): Clarify whether `timestamp_us` in production firmware represents:
-   * 1. Absolute Unix epoch time in microseconds (e.g. from NTP/GPS synchronization on the node), or
-   * 2. ESP32 hardware device uptime in microseconds (e.g. from esp_timer_get_time()).
-   *
-   * Currently, we perform direct conversion to milliseconds without heuristic magnitude branching.
-   * If `timestamp_us` is undefined or 0, fallback to standard epoch timestamp fields or host clock.
+   * CONTRACT AMBIGUITY:
+   * It cannot be conclusively established whether `timestamp_us` from the real Micro-ESPectre
+   * hardware represents absolute Unix epoch microseconds or device uptime microseconds.
+   * Python test producers explicitly send Unix epoch microseconds, but firmware may differ.
+   * We preserve the raw calculation here but rely exclusively on `host_receipt_time_ms`
+   * for freshness/health calculations to avoid false-positive CRITICAL staleness.
    */
   private convertTimestampUsToEpochMs(timestampUs?: number, fallbackEpochMs?: number): number {
     if (typeof timestampUs === 'number' && Number.isFinite(timestampUs) && timestampUs > 0) {

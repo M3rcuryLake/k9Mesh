@@ -4,6 +4,8 @@ export interface RadioTelemetry {
   rssi: number | null;
   latency: number | null;
   signalPercent: number | null;
+  channel: number | null;
+  dropped: number | null;
 }
 
 /** e.g. status values: "OK" | "FAULT" | "OFFLINE" */
@@ -43,6 +45,8 @@ export type MotionLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 export interface MotionTelemetry {
   level: MotionLevel | null;
   lastEventSeconds: number | null;
+  variance: number | null;
+  threshold: number | null;
 }
 
 export interface GpsTelemetry {
@@ -69,6 +73,14 @@ export interface OdometryTelemetry {
   motors: MotorsTelemetry;
 }
 
+export interface MlTelemetry {
+  ready: boolean | null;
+  enabled: boolean | null;
+  score: number | null;
+  motion: boolean | null;
+  classification: { t: number; x: number; y: number }[] | null;
+}
+
 /**
  * Complete telemetry model for the K9Mesh rover.
  * Null on any field = sensor data not yet received.
@@ -86,4 +98,5 @@ export interface RoverTelemetry {
   gps: GpsTelemetry;
   imu: ImuTelemetry;
   odometry: OdometryTelemetry;
+  ml: MlTelemetry;
 }

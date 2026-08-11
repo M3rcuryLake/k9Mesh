@@ -1,9 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  --color-green: #00ff66;
-  --color-green-dim: #00aa44;
-  --color-green-dark: #004422;
+  --color-cyan: #00e5ff;
+  --color-cyan-dim: #0a2a38;
+  --color-cyan-label: #2e6070;
+  --color-magenta: #e000a8;
+  --color-navy: #07090f;
+  --color-panel: #0b1220;
+  --color-ok: #00ff88;
+  --color-fault: #ff4444;
 }
 
 * {
@@ -12,17 +17,32 @@
   padding: 0;
 }
 
-body {
-  background-color: #000000;
-  color: #00ff66;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 11px;
-  overflow-x: hidden;
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
 }
 
-/* Keep CSS vars for any inline-style fallbacks */
+body {
+  background-color: #07090f;
+  color: #00e5ff;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px;
+  -webkit-font-smoothing: antialiased;
+}
+
 :root {
-  --green: #00ff66;
-  --green-dim: #00aa44;
-  --green-dark: #004422;
+  --cyan: #00e5ff;
+  --cyan-border: rgba(0, 229, 255, 0.22);
+  --cyan-border-bright: rgba(0, 229, 255, 0.45);
+  --cyan-grid: rgba(0, 229, 255, 0.08);
+  --cyan-label: #2e6070;
+  --magenta: #e000a8;
+  --magenta-dim: rgba(224, 0, 168, 0.18);
+  --navy: #07090f;
+  --panel: #0b1220;
+  --ok: #00ff88;
+  --fault: #ff4444;
+  --text-dim: #2e6070;
+  --text-mid: #5a9aaa;
+  --text-bright: #b0e8f0;
 }
