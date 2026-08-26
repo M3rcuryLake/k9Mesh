@@ -61,6 +61,9 @@ export class SchemaValidationRule implements ValidationRule {
       'gps',
       'imu',
       'odometry',
+      'ml',
+      'pose',
+      'respiration',
     ];
 
     for (const cat of categories) {

@@ -140,6 +140,12 @@ export class ElectronTelemetryProvider implements TelemetryProvider {
   private setStatus(newStatus: ConnectionStatus): void {
     if (this.status === newStatus) return;
     this.status = newStatus;
+
+    if (newStatus === 'DISCONNECTED' || newStatus === 'ERROR') {
+      this.currentTelemetry = { ...NULL_TELEMETRY };
+      this.notifyTelemetry();
+    }
+
     this.statusListeners.forEach((listener) => {
       try {
         listener(newStatus);

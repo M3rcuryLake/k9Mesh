@@ -42,15 +42,7 @@ export class TelemetryProviderFactory {
     switch (type) {
       case 'auto':
       case 'electron': {
-        const isElectronBridgeAvailable =
-          typeof window !== 'undefined' && Boolean(window.k9mesh?.telemetry);
-
-        if (isElectronBridgeAvailable || type === 'electron') {
-          return new ElectronTelemetryProvider();
-        }
-
-        // Automatic fallback for browser development without Electron
-        return new JsonTelemetryProvider(options?.json);
+        return new ElectronTelemetryProvider();
       }
 
       case 'json':

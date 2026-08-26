@@ -34,35 +34,45 @@ import json
 import signal
 import sys
 import time
+import math
 import websockets
 
 DEFAULT_WS_URI = "ws://127.0.0.1:8080"
 
 
 def generate_micro_espectre_packet(seq: int, motion_mode: bool = True) -> dict:
-    """Generates the authoritative Phase 10 Micro-ESPectre live sensing packet."""
+    """Generates the authoritative Phase 14 Micro-ESPectre live sensing packet."""
     now_us = int(time.time() * 1_000_000)
     
+    # Simulate some movement
+    t = time.time()
+    x = 1.9 + math.sin(t * 0.5) * 2.0
+    y = 8.1 + math.cos(t * 0.5) * 2.0
+    theta_deg = (t * 10) % 360
+
     return {
         "seq": seq,
         "timestamp_us": now_us,
-        "channel": 5,
-        "rssi": -61,
-        "channel": 11,
-        "rssi": -30,
-        "dropped": 4,
-        "band": [11, 13, 15, 17, 20, 22, 24, 26, 28, 46, 49, 51],
+        "channel": 3,
+        "rssi": -55,
+        "dropped": 0,
+        "band": [12,14,16,18,20,24,28,36,40,44,48,52],
         "mvs": {
-            "state": "STABLE",
-            "variance": 0.0055,
-            "threshold": 0.0011,
-            "confidence": 99.8877
+            "state": "motion" if motion_mode else "stable",
+            "variance": 2.0559 if motion_mode else 0.05,
+            "threshold": 0.3163,
+            "confidence": 100.0 if motion_mode else 12.5
         },
         "ml": {
             "ready": True,
             "score": None,
-            "motion": None,
-            "enabled": True
+            "detection": None,
+            "enabled": False
+        },
+        "pose": {
+            "x": x,
+            "y": y,
+            "theta_deg": theta_deg
         }
     }
 

@@ -81,6 +81,18 @@ export interface MlTelemetry {
   classification: { t: number; x: number; y: number }[] | null;
 }
 
+export interface PoseTelemetry {
+  x: number | null;
+  y: number | null;
+  thetaDeg: number | null;
+}
+
+export interface RespirationTelemetry {
+  rateBpm: number | null;
+  snr: number | null;
+  confidence: number | null;
+}
+
 /**
  * Complete telemetry model for the K9Mesh rover.
  * Null on any field = sensor data not yet received.
@@ -99,4 +111,6 @@ export interface RoverTelemetry {
   imu: ImuTelemetry;
   odometry: OdometryTelemetry;
   ml: MlTelemetry;
+  pose: PoseTelemetry;
+  respiration: RespirationTelemetry | null;
 }

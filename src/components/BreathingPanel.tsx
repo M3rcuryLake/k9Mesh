@@ -1,11 +1,12 @@
 import { useRef } from 'react'
-import type { CsiTelemetry } from '../types/telemetry'
+import type { CsiTelemetry, RespirationTelemetry } from '../types/telemetry'
 
 const NA = '--'
 const MAX_POINTS = 100
 const W = 280
 const H = 120
 const CYAN = '#00e5ff'
+const YELLOW = '#ffcc00'
 
 function mkPoints(hist: (number | null)[], yMin: number, yMax: number): string {
   const range = yMax - yMin || 1
@@ -22,14 +23,17 @@ function mkPoints(hist: (number | null)[], yMin: number, yMax: number): string {
 
 interface Props {
   csi: CsiTelemetry
+  respiration: RespirationTelemetry | null
 }
 
-export default function BreathingPanel({ csi }: Props) {
+export default function BreathingPanel({ csi, respiration }: Props) {
   const histRef = useRef<(number | null)[]>([])
 
   // Push current value during render (ref mutation is safe outside effects)
   const h = histRef.current
-  h.push(csi.breathingRate)
+  const currentRate = respiration?.rateBpm ?? null;
+  
+  h.push(currentRate)
   if (h.length > MAX_POINTS) h.shift()
 
   const nonNull = h.filter((v): v is number => v !== null)
@@ -38,15 +42,15 @@ export default function BreathingPanel({ csi }: Props) {
   const yMax = hasData ? Math.max(...nonNull) + 3 : 30
   const points = hasData ? mkPoints(h, yMin, yMax) : ''
 
-  const rateStr = csi.breathingRate !== null ? `${csi.breathingRate.toFixed(1)} BPM` : NA
-  const confStr = csi.confidence !== null ? `${csi.confidence}%` : NA
-  const stateStr = csi.state ?? NA
+  const rateStr = currentRate !== null ? `${currentRate.toFixed(1)} BPM` : NA
+  const confStr = respiration?.confidence !== undefined ? `${respiration.confidence.toFixed(1)}%` : NA
+  const snrStr = respiration?.snr !== undefined ? `${respiration.snr.toFixed(1)}` : NA
   const arrayStr = csi.arrayOnline === true ? 'ONLINE' : csi.arrayOnline === false ? 'OFFLINE' : NA
 
-  const stateColor =
-    csi.state === 'STABLE' ? '#00ff88'
-    : csi.state === 'MOTION' ? '#e000a8'
-    : 'var(--cyan-label)'
+  // Status mapping
+  const isBreathing = respiration && respiration.snr > 3 && respiration.confidence > 50;
+  const stateColor = isBreathing ? YELLOW : 'var(--cyan-label)';
+  const stateStr = isBreathing ? 'DETECTED' : 'SEARCHING';
 
   return (
     <div style={{
@@ -75,7 +79,13 @@ export default function BreathingPanel({ csi }: Props) {
       </div>
 
       {/* Rate readout */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 8px 2px', flexShrink: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', padding: '4px 8px 2px', flexShrink: 0 }}>
+        <div>
+          <div style={{ fontSize: 9, color: 'var(--cyan-label)' }}>SNR</div>
+          <div style={{ fontSize: 12, fontWeight: 'bold', color: 'var(--cyan)' }}>
+            {snrStr}
+          </div>
+        </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 9, color: 'var(--cyan-label)' }}>RATE</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: 'var(--cyan)', letterSpacing: '0.04em' }}>
