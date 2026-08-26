@@ -206,10 +206,6 @@ def get_wifi_info():
 
 
 
-# ============================================================================
-# Port and Chip Detection Functions
-# ============================================================================
-
 def detect_serial_ports():
     """Auto-detect available serial ports for ESP32 devices"""
     try:
@@ -336,10 +332,6 @@ def prompt_chip_type():
         print(f"\n{Fore.RED}Cancelled{Style.RESET_ALL}")
         return None
 
-
-# ============================================================================
-# Flash
-# ============================================================================
 
 def download_firmware(chip: str, firmware_dir: Path) -> Path:
     """Download firmware from GitHub releases if not already cached or hash mismatch"""
@@ -528,10 +520,6 @@ def flash_firmware(args):
         sys.exit(1)
 
 
-# ============================================================================
-# Deploy
-# ============================================================================
-
 def deploy_code(args):
     """Deploy Python code to MicroPython device using mpremote"""
     try:
@@ -610,11 +598,6 @@ def deploy_code(args):
         print(f"\n{Fore.RED}❌ Unexpected error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
-
-# ============================================================================
-# Run
-# ============================================================================
-
 def run_application(args):
     """Run application on ESP32"""
     try:
@@ -663,10 +646,6 @@ def run_application(args):
         print(f"\n{Fore.RED}❌ Unexpected error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
-
-# ============================================================================
-# Main Entry Point
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(

@@ -1,17 +1,10 @@
-"""
-Micro-ESPectre Configuration
-
-Author: Francesco Pace <francesco.pace@gmail.com>
-License: GPLv3
-"""
 import sys
 
 # WiFi Configuration
 WIFI_SSID = "YourSSID"
 WIFI_PASSWORD = "YourPassword"
 LOCAL_IP = "192.168.x.x"
-# Optional AP lock for mesh/repeater environments.
-# Format: "AA:BB:CC:DD:EE:FF" (or without separators).
+UDP_PORT = 5005
 # WIFI_BSSID = "AA:BB:CC:DD:EE:FF"
 
 # Traffic Generator Configuration
@@ -26,59 +19,16 @@ MOTION_OFF_HITS = 3           # Consecutive evaluated hits required for MOTION -
 # CSI Configuration
 CSI_BUFFER_SIZE = 8  # Circular buffer size (used to store csi packets until processed)
 
-# Default subcarriers (12 spread across HT20 band)
-DEFAULT_SUBCARRIERS = [12, 14, 16, 18, 20, 24, 28, 36, 40, 44, 48, 52]
-
-# Selected subcarriers for turbulence calculation. None to auto-calibrate at boot.
-#SELECTED_SUBCARRIERS = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-
 # Gain Lock Configuration
 # Controls AGC/FFT gain locking for stable CSI amplitudes
 # Modes: "auto" (skip if signal too strong), "enabled" (always lock), "disabled" (never lock)
+GAIN_LOCK_PACKETS = 300  # ~3 seconds at 100 Hz
 GAIN_LOCK_MODE = "auto"       # Recommended: "auto" - skips gain lock if AGC < 30
 GAIN_LOCK_MIN_SAFE_AGC = 30   # Minimum safe AGC value (below this, gain lock is skipped in auto mode)
-
-# Detection Algorithm
-# "mvs" (default): Moving Variance Segmentation - fast, good accuracy
-# "ml": Neural Network (9 features -> MLP) - learned patterns, no calibration needed
-DETECTION_ALGORITHM = "mvs"
-
-# Band Calibration Configuration (used when SELECTED_SUBCARRIERS is None)
-# NBVI: Normalized Band Variance Index (12 non-consecutive subcarriers)
-CALIBRATION_NUM_WINDOWS = 10   # Number of windows worth of packets to collect
-# CALIBRATION_BUFFER_SIZE calculated after SEG_WINDOW_SIZE is defined
-
-# Segmentation Parameters
-# SEG_THRESHOLD can be:
-#   - "auto" (default): adaptive threshold based on baseline noise
-#   - "min": maximum sensitivity (may have false positives)
-#   - a number (0.0-10.0): fixed manual threshold
-SEG_THRESHOLD = "auto"
-SEG_WINDOW_SIZE = 100         # Moving variance window (packets) - used by both MVS and Features
-SEG_WINDOW_SIZE_MIN = 10      # Minimum window size
-SEG_WINDOW_SIZE_MAX = 200     # Maximum window size
-
-# Calibration buffer size = number of windows * window size
-CALIBRATION_BUFFER_SIZE = CALIBRATION_NUM_WINDOWS * SEG_WINDOW_SIZE
-
-# Low-pass filter (removes high-frequency noise, reduces false positives)
-ENABLE_LOWPASS_FILTER = True   # Recommended: reduces FP in noisy environments
-LOWPASS_CUTOFF = 11.0          # Cutoff frequency in Hz (11 Hz: 2.3% FP, 92.4% Recall)
-                               # Human movement is typically 0.5-10 Hz, RF noise is >15 Hz
-
-# Hampel filter (removes outliers/spikes in turbulence)
-ENABLE_HAMPEL_FILTER = True    # Enable/disable Hampel outlier filter (spikes in turbulence)
-HAMPEL_WINDOW = 5             # Window size for median calculation (3-11)
-HAMPEL_THRESHOLD = 6.0        # Outlier detection threshold in MAD units (2.0-6.0 recommended)
-                              # Higher values = less aggressive filtering
 
 # HT20 Constants (64 subcarriers - do not change)
 NUM_SUBCARRIERS = 64           # HT20: 64 subcarriers
 EXPECTED_CSI_LEN = 128         # 64 SC × 2 bytes (I/Q pairs)
-GUARD_BAND_LOW = 11            # First valid subcarrier
-GUARD_BAND_HIGH = 52           # Last valid subcarrier
-DC_SUBCARRIER = 32             # DC null subcarrier
-BAND_SIZE = 12                 # Selected subcarriers for motion detection
 
 # Optional local overrides (config_local.py is gitignored)
 # Skip local overrides only under pytest to keep tests hermetic.

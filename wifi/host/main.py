@@ -1,27 +1,3 @@
-"""
-CSI receiver + MVS/ML detection orchestrator (laptop side).
-
-    ESP32 UDP -> CSIReceiver (Scapy sniff) -> per-packet amplitude
-                                                     |
-                                    13s still-room baseline
-                                                     |
-                                    NBVI band select + MVS calibrate
-                                                     |
-                              +----------------------+----------------------+
-                              |                                             |
-                         MVSDetector                                  MLDetector
-                     (NBVI band, adaptive thresh)              (fixed band, needs model.pkl)
-                              |                                             |
-                              +----------------------+----------------------+
-                                                     |
-                                          console output (state changes)
-
-Run:
-    sudo python main.py --interface wlp2s0
-    sudo python main.py --interface wlp2s0 --model model.pkl   # once you've trained one
-    sudo python main.py --interface wlp2s0 --skip-calibration  # use DEFAULT_BAND, no adaptive threshold
-"""
-
 import argparse
 import time
 import math
@@ -34,7 +10,14 @@ from receiver import CSIReceiver
 from csi_dsp import DEFAULT_BAND
 from mvs_detector import MVSDetector, MOTION
 from ml_detector import MLDetector
+from dead_reckoning import DeadReckoner
 import nbvi
+
+# --- Robot chassis constants (from k9Mesh SAR rover hardware) ---
+WHEEL_RADIUS_M = 0.03      # 3cm wheels
+TICKS_PER_REV = 20         # FC-03 disc: 20 holes, RISING-edge-only counting
+WHEELBASE_M = 0.15         # PLACEHOLDER -- measure center-to-center wheel distance and set this
+GYRO_FSR_DPS = 250.0       # matches firmware's GYRO_CONFIG (+-250dps)
 
 
 ws = None
@@ -48,7 +31,7 @@ def ws_send(payload):
     except (websocket.WebSocketConnectionClosedException, BrokenPipeError, ConnectionResetError):
         ws = None
 
-def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_result, dropped, band, ml_enabled):
+def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_result, dropped, band, ml_enabled, pose):
     return {
         "seq": packet.seq,
         "timestamp_us": packet.timestamp,
@@ -65,12 +48,13 @@ def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_res
         "ml": {
             "ready": ml_result["ready"],
             "score": ml_result["score"],
-            "motion": ml_result["motion"],
+            "detection": ml_result["motion"],
             "enabled": ml_enabled,
         },
+        "pose": pose,
     }
 
-def run_calibration(rx, duration_s, window_size):
+def run_calibration(rx, duration_s, window_size, expected_pps=20):
     """Collect a still-room baseline, then pick a band and MVS threshold.
 
     Returns (band, mvs_detector) - band is NBVI-selected if it succeeds,
@@ -87,25 +71,34 @@ def run_calibration(rx, duration_s, window_size):
         n_seen += 1
     print(f"Calibration phase for next {duration_s:.0f}s\n")
 
-    baseline_frames = []
+    # Size generously (duration * expected pps, +50% margin) - add_packet()
+    # just stops accepting once full, it won't crash if pps runs higher.
+    buffer_capacity = int(duration_s * expected_pps * 1.5) + 50
+    cal = nbvi.NBVICalibrator(
+        buffer_capacity=buffer_capacity,
+        mvs_window_size=window_size,
+        gain_locked=True,  # matches this project's GAIN_LOCK_MODE="auto" hardware default
+    )
+
     t_end = time.time() + duration_s
     while time.time() < t_end:
         try:
             packet = rx.recv(timeout=1.0)
         except Empty:
             continue
-        baseline_frames.append(packet.amplitudes)
+        cal.add_packet(packet.amplitudes)
 
-    print(f"Collected {len(baseline_frames)} baseline packets.")
+    print(f"Collected {cal.get_packet_count()} baseline packets.")
 
-    try:
-        band = nbvi.select_band(baseline_frames, k=12)
-        print(f"NBVI selected band: {band}")
-    except Exception as e:
+    band, _mv_values = cal.calibrate()
+    if band is None:
         band = list(DEFAULT_BAND)
-        print(f"NBVI selection failed ({e}); falling back to DEFAULT_BAND: {band}")
+        print(f"NBVI calibration failed; falling back to DEFAULT_BAND: {band}")
+    else:
+        print(f"NBVI selected band: {band}")
 
-    mvs = MVSDetector(band=band, window_size=window_size)
+    baseline_frames = cal.get_baseline_frames()
+    mvs = MVSDetector(band=band, window_size=window_size, gain_locked=True)
     try:
         threshold = mvs.calibrate(baseline_frames)
         print(f"MVS adaptive threshold: {threshold:.8f}")
@@ -156,12 +149,19 @@ def main():
 
     if args.skip_calibration:
         band = list(DEFAULT_BAND)
-        mvs = MVSDetector(band=band, window_size=args.mvs_window)
+        mvs = MVSDetector(band=band, window_size=args.mvs_window, gain_locked=True)
         print(f"Skipping calibration - using DEFAULT_BAND: {band}, no adaptive threshold.")
     else:
         band, mvs = run_calibration(rx, args.calibration_seconds, args.mvs_window)
 
     ml = MLDetector(model_path=args.model, window_size=args.ml_window)
+
+    dr = DeadReckoner(
+        wheel_radius_m=WHEEL_RADIUS_M,
+        ticks_per_rev=TICKS_PER_REV,
+        wheelbase_m=WHEELBASE_M,
+        gyro_fsr_dps=GYRO_FSR_DPS,
+    )
 
     print(f"\n{'-'*60}")
     print("Live detection - Ctrl+C to stop")
@@ -171,7 +171,7 @@ def main():
     n_packets = 0
 
     try:
-        global ws          # <-- add this line
+        global ws
 
         try:
             ws = websocket.create_connection("ws://127.0.0.1:8080")
@@ -189,8 +189,12 @@ def main():
             ml_result = ml.process(packet.amplitudes)
             mvs_confidence = variance_to_confidence(mvs_variance, mvs.threshold)  # no trailing comma
 
+            if packet.odom is not None and packet.odom.fresh:
+                dr.update(packet.odom)
+            pose = dr.pose
+
             result = build_json(packet, mvs_state, mvs_variance, mvs.threshold,
-                                mvs_confidence, ml_result, rx.dropped, band, ml.enabled)
+                                mvs_confidence, ml_result, rx.dropped, band, ml.enabled, pose)
             print(json.dumps(result))
             ws_send(result)                        # was: print(json.dumps(result))
 

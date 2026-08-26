@@ -5,6 +5,7 @@ import time
 import esp32
 import gc
 import os
+from machine import UART, Pin
 from src.traffic_generator import TrafficGenerator
 import src.config as config
 
@@ -14,11 +15,18 @@ GAIN_LOCK_PACKETS = 300  # ~3 seconds at 100 Hz
 UDP_IP = config.LOCAL_IP     # <-- DYNAMIC LATER
 UDP_PORT = 5005
 
+# CSI/radio header: seq, timestamp, channel, rssi, csi_len
 HEADER_FMT = "<IIHBB"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
+# Odometry block: ticksL, ticksR, ax, ay, az, gx, gy, gz, mpu_ok
+# ticks as signed 32-bit (wheel encoders can accumulate past int16 range),
+# IMU axes as signed 16-bit (native MPU9250 register width), mpu_ok as uint8
+ODOM_FMT = "<iihhhhhhB"
+ODOM_SIZE = struct.calcsize(ODOM_FMT)
+
 # Import HT20 constants from config
-from src.config import NUM_SUBCARRIERS, EXPECTED_CSI_LEN, SEG_THRESHOLD
+from src.config import NUM_SUBCARRIERS, EXPECTED_CSI_LEN
 from src.utils import to_signed_int8, calculate_median, normalize_ht20_csi_payload
 
 # Global state for calibration mode and performance metrics
@@ -33,6 +41,44 @@ class GlobalState:
 
 
 g_state = GlobalState()
+
+# Pick two free GPIOs on the S3 that match how you wired it to the
+# WROOM's UART2 (TX=17, RX=16 on the WROOM side) — cross them over:
+# S3 RX <- WROOM TX(17), S3 TX -> WROOM RX(16)
+ODOM_UART_ID = 1
+ODOM_RX_PIN  = 18   # example — use whatever's free on your S3
+ODOM_TX_PIN  = 17   # not really needed unless you want to send commands back
+
+odom_uart = UART(ODOM_UART_ID, baudrate=115200, rx=ODOM_RX_PIN, tx=ODOM_TX_PIN)
+odom_uart.init(115200, bits=8, parity=None, stop=1, timeout=0)  # timeout=0 -> non-blocking
+
+_odom_buf = b""
+
+def poll_odometry():
+    """Call this once per main-loop iteration. Non-blocking.
+    Returns a dict on a fresh complete line, else None."""
+    global _odom_buf
+    n = odom_uart.any()
+    if n:
+        _odom_buf += odom_uart.read(n)
+
+    if b"\n" not in _odom_buf:
+        return None
+
+    line, _, _odom_buf = _odom_buf.partition(b"\n")
+    try:
+        parts = line.decode().strip().split(",")
+        if len(parts) != 9:
+            return None
+        ticksL, ticksR, ax, ay, az, gx, gy, gz, mpu_ok = map(int, parts)
+        return {
+            "ticksL": ticksL, "ticksR": ticksR,
+            "ax": ax, "ay": ay, "az": az,
+            "gx": gx, "gy": gy, "gz": gz,
+            "mpu_ok": bool(mpu_ok),
+        }
+    except (ValueError, UnicodeError):
+        return None  # partial/garbled line — drop it, buffer already advanced past it
 
 def cleanup_wifi(wlan):
     """
@@ -275,8 +321,17 @@ def main():
     DEST = (UDP_IP, UDP_PORT)
     print("Streaming to", DEST)
     HEADER_SIZE = struct.calcsize(HEADER_FMT)
-    TX_SIZE = HEADER_SIZE + EXPECTED_CSI_LEN
+    TX_SIZE = HEADER_SIZE + ODOM_SIZE + EXPECTED_CSI_LEN
     tx_buffer = bytearray(TX_SIZE)
+
+    # Odometry hasn't necessarily arrived by the time the first CSI frame is
+    # ready -- start from zeros/not-ok so the packet layout is always valid.
+    last_odom = {
+        "ticksL": 0, "ticksR": 0,
+        "ax": 0, "ay": 0, "az": 0,
+        "gx": 0, "gy": 0, "gz": 0,
+        "mpu_ok": False,
+    }
 
     seq = 0
     ht57_remap_buffer = bytearray(EXPECTED_CSI_LEN)
@@ -284,6 +339,11 @@ def main():
     try:
         while True:
             frame = wlan.csi_read()
+            odom = poll_odometry()
+
+            if odom is not None:
+                last_odom = odom
+
             if frame is None:
                 continue
 
@@ -311,32 +371,32 @@ def main():
                 EXPECTED_CSI_LEN
             )
 
+            struct.pack_into(
+                ODOM_FMT,
+                tx_buffer,
+                HEADER_SIZE,
+                last_odom["ticksL"],
+                last_odom["ticksR"],
+                last_odom["ax"],
+                last_odom["ay"],
+                last_odom["az"],
+                last_odom["gx"],
+                last_odom["gy"],
+                last_odom["gz"],
+                1 if last_odom["mpu_ok"] else 0,
+            )
+
             tx_buffer[
-                HEADER_SIZE:
-                HEADER_SIZE + EXPECTED_CSI_LEN
+                HEADER_SIZE + ODOM_SIZE:
+                HEADER_SIZE + ODOM_SIZE + EXPECTED_CSI_LEN
             ] = csi_data
 
             print(len(tx_buffer))
             print(DEST)
             sock.sendto(tx_buffer, DEST)
-            heap_info = esp32.idf_heap_info(esp32.HEAP_DATA)
             time.sleep_ms(20)
 
-            # Each item is a 4-tuple: (total_bytes, free_bytes, largest_free_block, min_free_ever)
-            for i, h in enumerate(heap_info):
-                print(f"Heap region {i}:")
-                print(f"  Total bytes:        {h[0]}")
-                print(f"  Free bytes:         {h[1]}")
-                print(f"  Largest free block: {h[2]}")
-                print(f"  Min free ever:      {h[3]}")
-
-            if (seq & 0x3F) == 0:
-                print(
-                    "SEQ:",
-                    seq,
-                    "Heap:",
-                    gc.mem_free()
-                )
+            print("ODOM : ", odom)
 
             seq += 1
 

@@ -1,14 +1,3 @@
-"""
-CSI UDP receiver.
-
-Parses packets sent by the ESP32 acquisition node (main.py on the ESP32
-side) and turns them into CSIPacket objects with per-subcarrier amplitude
-already extracted, ready for the DSP pipeline.
-
-IMPORTANT: HEADER_FMT here must exactly match the ESP32 firmware's
-HEADER_FMT. If you change one, change both.
-"""
-
 from dataclasses import dataclass, field
 from queue import Queue
 import math
@@ -21,7 +10,30 @@ import struct
 HEADER_FMT = "<IIHbB"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
+# ticksL(i32), ticksR(i32), ax,ay,az,gx,gy,gz(i16 x6), mpu_ok(u8)
+# Must match the ESP32 firmware's ODOM_FMT exactly. The firmware does NOT
+# send a "fresh" bit on the wire -- odometry updates at ~10Hz while CSI can
+# arrive faster, so the same odom block gets repeated across several CSI
+# packets. We derive freshness here by diffing against the previous sample.
+# Wire layout is [header][odom_block][csi_data], matching main.py.
+ODOM_FMT = "<iihhhhhhB"
+ODOM_SIZE = struct.calcsize(ODOM_FMT)
+
 NUM_SUBCARRIERS = 64  # HT20
+
+
+@dataclass(slots=True)
+class OdomSample:
+    ticks_l: int
+    ticks_r: int
+    ax: int
+    ay: int
+    az: int
+    gx: int
+    gy: int
+    gz: int
+    mpu_ok: bool
+    fresh: bool  # False if this is a repeat of the last sample sent (odom is slower than CSI rate)
 
 
 def extract_amplitudes(csi_bytes: bytes) -> list[float]:
@@ -58,6 +70,7 @@ class CSIPacket:
     length: int
     csi_raw: bytes
     amplitudes: list = field(default_factory=list)
+    odom: OdomSample | None = None
 
 
 class CSIReceiver:
@@ -71,18 +84,36 @@ class CSIReceiver:
         self.dropped = 0
         self.received = 0
 
+        # Last raw odom tuple seen (sans freshness), used to detect repeats
+        # across packets since the firmware doesn't send a freshness bit.
+        self._last_odom_raw = None
+
         self._sock = None
         self._running = False
 
     def _handle_datagram(self, payload):
-        if len(payload) < HEADER_SIZE:
+        if len(payload) < HEADER_SIZE + ODOM_SIZE:
             return
 
         seq, ts, channel, rssi, length = struct.unpack(
             HEADER_FMT, payload[:HEADER_SIZE]
         )
 
-        csi_raw = payload[HEADER_SIZE:HEADER_SIZE + length]
+        # Odom block sits right after the header; CSI payload follows it.
+        odom_offset = HEADER_SIZE
+        csi_offset = HEADER_SIZE + ODOM_SIZE
+
+        odom_bytes = payload[odom_offset:csi_offset]
+        odom_fields = struct.unpack(ODOM_FMT, odom_bytes)
+        ticks_l, ticks_r, ax, ay, az, gx, gy, gz, mpu_ok = odom_fields
+
+        fresh = odom_fields != self._last_odom_raw
+        self._last_odom_raw = odom_fields
+
+        odom = OdomSample(ticks_l, ticks_r, ax, ay, az, gx, gy, gz,
+                           bool(mpu_ok), fresh)
+
+        csi_raw = payload[csi_offset:csi_offset + length]
         if len(csi_raw) < length:
             # Truncated packet (fragmentation/loss mid-payload) - skip it
             return
@@ -96,7 +127,7 @@ class CSIReceiver:
 
         amplitudes = extract_amplitudes(csi_raw)
 
-        packet = CSIPacket(seq, ts, channel, rssi, length, csi_raw, amplitudes)
+        packet = CSIPacket(seq, ts, channel, rssi, length, csi_raw, amplitudes, odom)
 
         try:
             self.queue.put_nowait(packet)
