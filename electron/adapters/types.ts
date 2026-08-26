@@ -13,6 +13,12 @@ export interface MicroESPectreMlPayload {
   readonly classification?: { t: number; x: number; y: number }[] | null;
 }
 
+export interface MicroESPectrePosePayload {
+  readonly x?: number;
+  readonly y?: number;
+  readonly theta_deg?: number;
+}
+
 /**
  * Raw Micro-ESPectre Ingest Packet Schema
  * Represents the transport payload emitted by the Micro-ESPectre CSI sensing node.
@@ -28,6 +34,7 @@ export interface RawMicroESPectrePacket {
   readonly band?: number[];
   readonly mvs?: MicroESPectreMvsPayload;
   readonly ml?: MicroESPectreMlPayload;
+  readonly pose?: MicroESPectrePosePayload;
 
   // Legacy / Extended Fields
   readonly timestamp?: number;
@@ -134,6 +141,19 @@ export interface ICDMlTelemetry {
   classification: { t: number; x: number; y: number }[] | null;
 }
 
+export interface ICDPoseTelemetry {
+  x: number | null;
+  y: number | null;
+  thetaDeg: number | null;
+}
+
+export interface ICDRespirationTelemetry {
+  state: string | null;
+  variance: number | null;
+  threshold: number | null;
+  confidence: number | null;
+}
+
 export interface ICDRoverTelemetryData {
   radio: ICDRadioTelemetry;
   hardware: ICDHardwareTelemetry;
@@ -144,6 +164,8 @@ export interface ICDRoverTelemetryData {
   imu: ICDImuTelemetry;
   odometry: ICDOdometryTelemetry;
   ml: ICDMlTelemetry;
+  pose: ICDPoseTelemetry;
+  respiration: ICDRespirationTelemetry | null;
 }
 
 /**

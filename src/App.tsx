@@ -12,6 +12,7 @@ import BottomBar from './components/BottomBar'
 import BatteryPanel from './components/BatteryPanel'
 import HardwarePanel from './components/HardwarePanel'
 import CommsPanel from './components/CommsPanel'
+import { useMissionState } from './hooks/useMissionState'
 
 export default function App() {
   const provider = useMemo(
@@ -19,6 +20,7 @@ export default function App() {
     []
   )
   const { telemetry, status } = useTelemetry(provider)
+  const missionState = useMissionState(status, telemetry)
 
   return (
     <div style={{
@@ -30,9 +32,10 @@ export default function App() {
       fontFamily: "'Courier New', Courier, monospace",
       fontSize: 11,
       color: 'var(--cyan)',
+      border: missionState === 'LINK_LOST' ? '1px solid var(--yellow)' : 'none',
     }}>
       {/* ── Header ───────────────────────────────────────────── */}
-      <Header radio={telemetry.radio} status={status} />
+      <Header radio={telemetry.radio} status={status} missionState={missionState} />
 
       {/* ── Main area ─────────────────────────────────────────── */}
       <div style={{
@@ -77,8 +80,8 @@ export default function App() {
           overflow: 'hidden',
         }}>
           <OperationalMap
-            gps={telemetry.gps}
-            csi={telemetry.csi}
+            telemetry={telemetry}
+            missionState={missionState}
           />
           <BottomBar odometry={telemetry.odometry} />
         </div>

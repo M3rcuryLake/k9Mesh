@@ -6,9 +6,10 @@ const NA = '--'
 interface Props {
   radio: RadioTelemetry
   status: ConnectionStatus
+  missionState: string
 }
 
-export default function Header({ radio, status }: Props) {
+export default function Header({ radio, status, missionState }: Props) {
   const linkLabel =
     status === 'CONNECTED' ? 'ACTIVE'
     : status === 'CONNECTING' ? 'CONNECTING'
@@ -40,15 +41,26 @@ export default function Header({ radio, status }: Props) {
       </div>
 
       {/* Center */}
-      <div style={{
-        fontSize: 18,
-        fontWeight: 'bold',
-        letterSpacing: '0.35em',
-        color: 'var(--cyan)',
-        border: '1px solid var(--cyan-border-bright)',
-        padding: '2px 16px',
-      }}>
-        K9MESH
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{
+          fontSize: 18,
+          fontWeight: 'bold',
+          letterSpacing: '0.35em',
+          color: 'var(--cyan)',
+          border: '1px solid var(--cyan-border-bright)',
+          padding: '2px 16px',
+        }}>
+          K9MESH
+        </div>
+        <div style={{
+          fontSize: 10,
+          marginTop: 2,
+          color: 'var(--yellow)',
+          letterSpacing: '0.1em',
+          fontWeight: 'bold'
+        }}>
+          {missionState.replace(/_/g, ' ')}
+        </div>
       </div>
 
       {/* Right */}

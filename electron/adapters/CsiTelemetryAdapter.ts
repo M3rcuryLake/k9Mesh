@@ -127,19 +127,8 @@ export class CsiTelemetryAdapter
       }
 
       // Resolve ML & Array Status
-      const arrayOnline =
-        typeof pkt.ml?.ready === 'boolean'
-          ? pkt.ml.ready
-          : typeof pkt.csi_array_status === 'boolean'
-          ? pkt.csi_array_status
-          : true;
-
-      const calibrated =
-        typeof pkt.ml?.ready === 'boolean'
-          ? pkt.ml.ready
-          : typeof pkt.csi_calibrated === 'boolean'
-          ? pkt.csi_calibrated
-          : null;
+      const arrayOnline = typeof pkt.csi_array_status === 'boolean' ? pkt.csi_array_status : null;
+      const calibrated = typeof pkt.csi_calibrated === 'boolean' ? pkt.csi_calibrated : null;
 
       // Derive Radio link metrics (support both pkt.rssi and pkt.wifi_rssi)
       const rssi =
@@ -149,27 +138,6 @@ export class CsiTelemetryAdapter
           ? pkt.wifi_rssi
           : null;
 
-      const signalPercent =
-        rssi !== null ? Math.min(100, Math.max(0, Math.round((rssi + 100) * 2))) : null;
-
-      const linkQuality: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' | null =
-        rssi !== null
-          ? rssi > -65
-            ? 'EXCELLENT'
-            : rssi > -75
-            ? 'GOOD'
-            : rssi > -85
-            ? 'FAIR'
-            : 'POOR'
-          : null;
-
-      // Subsystem health: explicitly derived from reported telemetry or set to null
-      const esp32Status: 'OK' | 'FAULT' | 'OFFLINE' | null =
-        arrayOnline === false ? 'FAULT' : 'OK';
-
-      const wifiStatus: 'OK' | 'FAULT' | 'OFFLINE' | null =
-        rssi !== null ? (rssi > -85 ? 'OK' : 'FAULT') : null;
-
       const envelope: RoverTelemetryEnvelope = {
         protocol_version: '1.0',
         msg_type: 'TELEMETRY',
@@ -178,19 +146,19 @@ export class CsiTelemetryAdapter
         node_id: nodeId,
         data: {
           radio: {
-            linkQuality,
+            linkQuality: null, // Removed synthetic derivation
             rssi,
             latency: null, // Latency is not measured in raw CSI packet
-            signalPercent,
+            signalPercent: null, // Removed synthetic derivation
             channel: typeof pkt.channel === 'number' ? pkt.channel : null,
             dropped: typeof pkt.dropped === 'number' ? pkt.dropped : null,
           },
           hardware: {
-            stm32: null, // STM32 status not reported by ESP32 CSI sensor alone
-            esp32: esp32Status,
+            stm32: null, // Not reported
+            esp32: null, // Removed synthetic derivation from ml.ready
             mqtt: null,  // Managed by host / broker subsystem
-            wifi: wifiStatus,
-            coreTemp: null, // Not reported in raw CSI packet
+            wifi: null, // Removed synthetic derivation from rssi
+            coreTemp: null, // Not reported
           },
           battery: {
             percent: typeof pkt.battery_percent === 'number' ? pkt.battery_percent : null,
@@ -247,6 +215,12 @@ export class CsiTelemetryAdapter
                 )
               : null,
           },
+          pose: {
+            x: typeof pkt.pose?.x === 'number' ? pkt.pose.x : null,
+            y: typeof pkt.pose?.y === 'number' ? pkt.pose.y : null,
+            thetaDeg: typeof pkt.pose?.theta_deg === 'number' ? pkt.pose.theta_deg : null,
+          },
+          respiration: null, // Future reservation
         },
       };
 

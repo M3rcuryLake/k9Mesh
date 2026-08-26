@@ -118,6 +118,19 @@ export class EngineeringValidationRule implements ValidationRule {
       }
     }
 
+    // 9. MVS Limits
+    if (data.motion && data.motion.variance !== undefined) {
+      // It's mapped under motion, but in our adapter we map mvs.confidence to csi.confidence currently!
+      // Wait, let me check CsiTelemetryAdapter.ts: I mapped mvs.confidence to csi.confidence
+      // So csi.confidence is already checked.
+    }
+
+    // 10. Pose Limits
+    if (data.pose) {
+      const p = data.pose;
+      this.checkRange(issues, 'pose.thetaDeg', p.thetaDeg, -360.0, 360.0);
+    }
+
     return issues;
   }
 

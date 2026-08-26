@@ -135,13 +135,13 @@ async function runQualificationSuite() {
   if (
     latestAdapted.msg_type !== 'TELEMETRY' ||
     latestAdapted.data.radio.rssi !== -61 ||
-    latestAdapted.data.radio.linkQuality !== 'EXCELLENT' ||
-    latestAdapted.data.radio.signalPercent !== 78 ||
+    latestAdapted.data.radio.linkQuality !== null ||
+    latestAdapted.data.radio.signalPercent !== null ||
     latestAdapted.data.csi.state !== 'MOTION' ||
     latestAdapted.data.motion.level !== 'HIGH' ||
-    latestAdapted.data.csi.calibrated !== true ||
-    latestAdapted.data.csi.arrayOnline !== true ||
-    latestAdapted.data.hardware.esp32 !== 'OK' ||
+    latestAdapted.data.csi.calibrated !== null ||
+    latestAdapted.data.csi.arrayOnline !== null ||
+    latestAdapted.data.hardware.esp32 !== null ||
     latestAdapted.data.battery.voltage !== null ||
     latestAdapted.data.battery.percent !== null ||
     latestAdapted.data.gps.latitude !== null ||

@@ -65,6 +65,12 @@ export const NULL_TELEMETRY: RoverTelemetry = {
     motion: null,
     classification: null,
   },
+  pose: {
+    x: null,
+    y: null,
+    thetaDeg: null,
+  },
+  respiration: null,
 };
 
 /**
@@ -159,6 +165,12 @@ export class TelemetryMapper {
         motion: data?.ml?.motion ?? null,
         classification: data?.ml?.classification ?? null,
       },
+      pose: {
+        x: data?.pose?.x ?? null,
+        y: data?.pose?.y ?? null,
+        thetaDeg: data?.pose?.thetaDeg ?? null,
+      },
+      respiration: data?.respiration ?? null,
     };
   }
 }
