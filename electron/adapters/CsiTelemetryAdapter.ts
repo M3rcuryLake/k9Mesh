@@ -220,7 +220,11 @@ export class CsiTelemetryAdapter
             y: typeof pkt.pose?.y === 'number' ? pkt.pose.y : null,
             thetaDeg: typeof pkt.pose?.theta_deg === 'number' ? pkt.pose.theta_deg : null,
           },
-          respiration: null, // Future reservation
+          respiration: pkt.breath ? {
+            rateBpm: typeof pkt.breath.rate_bpm === 'number' ? pkt.breath.rate_bpm : null,
+            snr: typeof pkt.breath.snr === 'number' ? pkt.breath.snr : null,
+            confidence: typeof pkt.breath.confidence === 'number' ? pkt.breath.confidence : null,
+          } : null,
         },
       };
 

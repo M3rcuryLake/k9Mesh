@@ -110,9 +110,10 @@ export default function OperationalMap({ telemetry, missionState }: OperationalM
   const showMotion = confidence > 50 && activeRoverPos !== null;
   const motionOpacity = showMotion ? Math.min(0.8, Math.max(0.1, (confidence - 50) / 50)) : 0;
 
-  // 4. Future Respiration logic stub
+  // 4. Breathing Detection logic
   const respConfidence = telemetry.respiration?.confidence ?? 0;
-  const showRespiration = respConfidence > 50 && activeRoverPos !== null;
+  const respSnr = telemetry.respiration?.snr ?? 0;
+  const showRespiration = respSnr > 3 && respConfidence > 50 && activeRoverPos !== null;
   const respOpacity = showRespiration ? Math.min(0.8, Math.max(0.1, (respConfidence - 50) / 50)) : 0;
 
   return (

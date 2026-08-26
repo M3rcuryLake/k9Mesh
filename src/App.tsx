@@ -58,7 +58,7 @@ export default function App() {
         }}>
           {/* Breathing — tallest (~45%) */}
           <div style={{ flex: '0 0 43%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <BreathingPanel csi={telemetry.csi} />
+            <BreathingPanel csi={telemetry.csi} respiration={telemetry.respiration} />
           </div>
           {/* Motion (~35%) */}
           <div style={{ flex: '0 0 35%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>

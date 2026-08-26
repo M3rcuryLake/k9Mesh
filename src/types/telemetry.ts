@@ -88,9 +88,8 @@ export interface PoseTelemetry {
 }
 
 export interface RespirationTelemetry {
-  state: string | null;
-  variance: number | null;
-  threshold: number | null;
+  rateBpm: number | null;
+  snr: number | null;
   confidence: number | null;
 }
 

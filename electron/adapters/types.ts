@@ -19,6 +19,17 @@ export interface MicroESPectrePosePayload {
   readonly theta_deg?: number;
 }
 
+export interface MicroESPectreBreathPayload {
+  readonly rate_bpm?: number | null;
+  readonly snr?: number;
+  readonly confidence?: number;
+  readonly peak_freq_hz?: number;
+  readonly spectral_purity?: number;
+  readonly band_power_frac?: number;
+  readonly harmonic_ratio?: number;
+  readonly n_samples?: number;
+}
+
 /**
  * Raw Micro-ESPectre Ingest Packet Schema
  * Represents the transport payload emitted by the Micro-ESPectre CSI sensing node.
@@ -35,6 +46,7 @@ export interface RawMicroESPectrePacket {
   readonly mvs?: MicroESPectreMvsPayload;
   readonly ml?: MicroESPectreMlPayload;
   readonly pose?: MicroESPectrePosePayload;
+  readonly breath?: MicroESPectreBreathPayload;
 
   // Legacy / Extended Fields
   readonly timestamp?: number;
@@ -148,9 +160,8 @@ export interface ICDPoseTelemetry {
 }
 
 export interface ICDRespirationTelemetry {
-  state: string | null;
-  variance: number | null;
-  threshold: number | null;
+  rateBpm: number | null;
+  snr: number | null;
   confidence: number | null;
 }
 
