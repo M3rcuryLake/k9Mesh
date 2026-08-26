@@ -1,0 +1,4 @@
+# WiFi Configuration
+WIFI_SSID = None
+WIFI_PASSWORD = None
+LOCAL_IP = None
