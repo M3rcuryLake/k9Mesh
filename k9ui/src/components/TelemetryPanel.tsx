@@ -38,13 +38,15 @@ export function TelemetryPanel() {
   if (!telemetry) return null;
 
   const rssiQ = rssiQuality(telemetry.rssi);
-  const tempS = tempState(telemetry.temperature_c);
+  const tempC = telemetry.temperature_c ?? 0;
+  const tempS = tempState(tempC);
   const seqGap = telemetry.dropped > 0;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Band / Channel */}
+      {/* Band / Channel + Signal */}
       <div className="rounded-xl border border-ink-500/30 bg-ink-800/60 p-5">
+        {/* Band / Channel */}
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Band / Channel
@@ -67,10 +69,11 @@ export function TelemetryPanel() {
             </span>
           ))}
         </div>
-      </div>
 
-      {/* Signal */}
-      <div className="rounded-xl border border-ink-500/30 bg-ink-800/60 p-5">
+        {/* Divider */}
+        <div className="my-4 h-px bg-ink-500/20" />
+
+        {/* Signal */}
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Signal
@@ -102,8 +105,9 @@ export function TelemetryPanel() {
         </div>
       </div>
 
-      {/* Temperature */}
+      {/* Temperature + Uptime + Packet Health */}
       <div className="rounded-xl border border-ink-500/30 bg-ink-800/60 p-5">
+        {/* Temperature */}
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Temperature
@@ -113,20 +117,21 @@ export function TelemetryPanel() {
               className={`font-mono text-lg font-semibold tabular-nums ${tempS.warning ? 'animate-pulse' : ''}`}
               style={{ color: tempS.color }}
             >
-              {telemetry.temperature_c.toFixed(1)}
+              {tempC.toFixed(1)}
             </span>
             <span className="font-mono text-[10px] text-slate-500">°C</span>
           </div>
         </div>
         {tempS.warning && (
           <p className="mt-2 font-mono text-[9px] text-red-400">
-            {telemetry.temperature_c > 50 ? 'CRITICAL THRESHOLD' : 'ELEVATED'}
+            {tempC > 50 ? 'CRITICAL THRESHOLD' : 'ELEVATED'}
           </p>
         )}
-      </div>
 
-      {/* Uptime */}
-      <div className="rounded-xl border border-ink-500/30 bg-ink-800/60 p-5">
+        {/* Divider */}
+        <div className="my-4 h-px bg-ink-500/20" />
+
+        {/* Uptime */}
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Uptime
@@ -135,10 +140,11 @@ export function TelemetryPanel() {
             {formatUptime(uptime)}
           </span>
         </div>
-      </div>
 
-      {/* Packet Health */}
-      <div className="rounded-xl border border-ink-500/30 bg-ink-800/60 p-5">
+        {/* Divider */}
+        <div className="my-4 h-px bg-ink-500/20" />
+
+        {/* Packet Health */}
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Packet Health

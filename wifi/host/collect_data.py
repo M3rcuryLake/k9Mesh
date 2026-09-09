@@ -15,15 +15,20 @@ Usage:
 Collect several runs of each label, ideally at different distances/angles
 from the sensor, before training - a handful of 60-120s runs per class is
 a reasonable starting point, not a hard requirement.
+
+Note: `sudo` is only needed for SO_BINDTODEVICE (binding the UDP socket to
+a specific --interface). If that fails without root, CSIReceiver falls
+back to binding all interfaces (0.0.0.0), so plain `python` still works
+as long as only one NIC could plausibly be receiving the stream.
 """
 
 import argparse
+import threading
 import time
 from pathlib import Path
 from queue import Empty
 
 import numpy as np
-from scapy.all import AsyncSniffer
 
 from receiver import CSIReceiver
 from csi_dsp import DEFAULT_BAND, HampelFilter, spatial_turbulence
@@ -47,13 +52,8 @@ def main():
     band = args.band or list(DEFAULT_BAND)
 
     rx = CSIReceiver(interface=args.interface, port=args.port)
-    sniffer = AsyncSniffer(
-        iface=args.interface,
-        filter=f"udp port {args.port}",
-        prn=rx._handle_packet,
-        store=False,
-    )
-    sniffer.start()
+    rx_thread = threading.Thread(target=rx.start, daemon=True)
+    rx_thread.start()
 
     hampel = HampelFilter(window=7, threshold=5.0)
     turbulence_window = []
@@ -96,11 +96,13 @@ def main():
     except KeyboardInterrupt:
         print("\nStopped early.")
     finally:
-        sniffer.stop()
+        rx.stop()
 
     if not feature_rows:
-        print("No full windows collected - check the sniffer is actually "
-              "receiving packets (try running with sudo, check --interface).")
+        print("No full windows collected - check the receiver is actually "
+              "getting packets (confirm the ESP32 node is streaming to "
+              "--port, and --interface is correct; run with sudo if "
+              "SO_BINDTODEVICE binding to that interface is needed).")
         return
 
     X = np.array(feature_rows, dtype=np.float32)

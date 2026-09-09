@@ -4,6 +4,7 @@ import { RoverMap } from '@/components/RoverMap';
 import { MotionGraph, BreathingGraph, AiGraph } from '@/components/LiveGraph';
 import { TelemetryPanel } from '@/components/TelemetryPanel';
 import { Activity, Radio, Cpu, Wifi, WifiOff } from 'lucide-react';
+import { SignalListener } from '@/components/SignalListener';
 
 function ConnectionBadge() {
   const { connectionStatus } = useTelemetry();
@@ -49,7 +50,9 @@ function HeaderBar() {
       ? '#22d3ee'
       : mvsState === 'detecting'
         ? '#fbbf24'
-        : '#64748b';
+        : mvsState === 'motion'
+          ? '#fbbf24'
+          : '#64748b';
 
   return (
     <header className="flex items-center justify-between border-b border-ink-500/30 bg-ink-900/80 px-6 py-3 backdrop-blur-sm">
@@ -81,12 +84,12 @@ function HeaderBar() {
             MVS: {mvsState}
           </span>
         </div>
-<div className="flex items-center gap-2">
-            <Activity className="h-3 w-3 text-cyan-400" />
-            <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-              Breath: {telemetry?.breath?.rate_bpm != null ? telemetry.breath.rate_bpm.toFixed(1) : '—'} BPM
-            </span>
-          </div>
+        <div className="flex items-center gap-2">
+          <Activity className="h-3 w-3 text-cyan-400" />
+          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+            Breath: {telemetry?.breath?.rate_bpm != null ? telemetry.breath.rate_bpm.toFixed(1) : '—'} BPM
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <Cpu
             className={`h-3 w-3 ${telemetry?.ml.enabled ? 'text-violet-400' : 'text-slate-600'}`}
@@ -108,21 +111,26 @@ function Dashboard() {
     <div className="flex h-screen flex-col overflow-hidden bg-ink-900">
       <HeaderBar />
       <div className="flex min-h-0 flex-1 gap-4 p-4">
-        {/* Main center column — spectrogram + map stacked */}
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          {/* Spectrogram — top 1/3 */}
-          <div className="h-[33%] min-h-0">
-            <Spectrogram />
+        {/* Main center column — spectrogram row + map stacked (2/3 width) */}
+        <div className="flex min-w-0 flex-[2] flex-col gap-3 min-h-0">
+          {/* Top row — spectrogram (left half) + start listening (right half) */}
+          <div className="flex min-h-[200px] flex-1 gap-3">
+            <div className="min-w-0 flex-1">
+              <Spectrogram />
+            </div>
+            <div className="min-w-0 flex-1">
+              <SignalListener />
+            </div>
           </div>
-          {/* Map — bottom 2/3 */}
-          <div className="h-[calc(67%-12px)] min-h-0">
+          {/* Map — bottom 2/3, always visible */}
+          <div className="flex-[3] min-h-[200px]">
             <RoverMap />
           </div>
         </div>
 
-        {/* Right sidebar — graphs + telemetry */}
+        {/* Right sidebar — graphs + telemetry (1/3 width) */}
         <div
-          className={`flex w-96 shrink-0 flex-col gap-4 overflow-y-auto pr-1 transition-[filter,opacity] duration-500 ${
+          className={`flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 transition-[filter,opacity] duration-500 ${
             isOffline ? 'pointer-events-none opacity-60 saturate-50' : ''
           }`}
         >

@@ -2,37 +2,73 @@ import argparse
 import time
 import math
 import json
+import asyncio
 import threading
-from pathlib import Path
+from collections import deque
 from queue import Empty
-import websocket
+
+import numpy as np
+import websockets
+
 from receiver import CSIReceiver
-from csi_dsp import DEFAULT_BAND
+from csi_dsp import DEFAULT_BAND, HampelFilter
 from mvs_detector import MVSDetector, MOTION
 from ml_detector import MLDetector
 from dead_reckoning import DeadReckoner
+from respiration import (
+    BREATH_WINDOW_SEC,
+    BREATH_TICK_SEC,
+    BREATH_RESAMPLE_HZ,
+    band_amplitude,
+    detect_breath,
+)
+from spectrogram import SpectrogramProcessor
 import nbvi
 
-# --- Robot chassis constants (from k9Mesh SAR rover hardware) ---
 WHEEL_RADIUS_M = 0.03      # 3cm wheels
-TICKS_PER_REV = 20         # FC-03 disc: 20 holes, RISING-edge-only counting
+TICKS_PER_REV = 20 * 24
 WHEELBASE_M = 0.15         # PLACEHOLDER -- measure center-to-center wheel distance and set this
 GYRO_FSR_DPS = 250.0       # matches firmware's GYRO_CONFIG (+-250dps)
 
 
-ws = None
+connected_clients: set[websockets.WebSocketServerProtocol] = set()
+telemetry_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
-def ws_send(payload):
-    global ws
-    if ws is None:
-        return
+
+async def ws_handler(websocket: websockets.WebSocketServerProtocol):
+    connected_clients.add(websocket)
+    print(f"Client connected ({len(connected_clients)} total)")
     try:
-        ws.send(json.dumps(payload))
-    except (websocket.WebSocketConnectionClosedException, BrokenPipeError, ConnectionResetError):
-        ws = None
+        await websocket.wait_closed()
+    finally:
+        connected_clients.remove(websocket)
+        print(f"Client disconnected ({len(connected_clients)} total)")
 
-def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_result, dropped, band, ml_enabled, pose):
-    return {
+
+async def broadcast_loop():
+    while True:
+        payload = await telemetry_queue.get()
+        if not connected_clients:
+            continue
+        message = json.dumps(payload)
+        results = await asyncio.gather(
+            *[client.send(message) for client in connected_clients],
+            return_exceptions=True
+        )
+        for client, result in zip(connected_clients, results):
+            if isinstance(result, Exception):
+                print(f"Send error to client: {result}")
+
+
+def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf, ml_result,
+                dropped, band, ml_enabled, pose, breath_result, spectrogram_row=None):
+    odom = packet.odom
+    # Real MPU9250 die temperature from the odom block (None if this packet
+    # arrived before the first odometry line showed up, or if the WROOM
+    # reported mpu_ok=False for this sample -- stale temp reading in that
+    # case, so don't pass it off as current).
+    temperature_c = odom.temp_c if (odom is not None and odom.mpu_ok) else None
+    result = {
         "seq": packet.seq,
         "timestamp_us": packet.timestamp,
         "channel": packet.channel,
@@ -51,14 +87,22 @@ def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf , ml_res
             "detection": ml_result["motion"],
             "enabled": ml_enabled,
         },
+        "breath": json.loads(breath_result.to_json()) if breath_result else None,
         "pose": pose,
+        "temperature_c": temperature_c,
+        "stale": (odom is None) or (not odom.fresh),
     }
+    if spectrogram_row is not None:
+        result["csi_spectrogram_row"] = spectrogram_row
+    return result
+
 
 def run_calibration(rx, duration_s, window_size, expected_pps=20):
     """Collect a still-room baseline, then pick a band and MVS threshold.
 
     Returns (band, mvs_detector) - band is NBVI-selected if it succeeds,
     otherwise DEFAULT_BAND (matching upstream's documented fallback).
+    Breath detection reuses this same band -- no separate calibration step.
     """
     print("Waiting for stream to stabilize (first few packets of this session)...\n")
 
@@ -71,13 +115,11 @@ def run_calibration(rx, duration_s, window_size, expected_pps=20):
         n_seen += 1
     print(f"Calibration phase for next {duration_s:.0f}s\n")
 
-    # Size generously (duration * expected pps, +50% margin) - add_packet()
-    # just stops accepting once full, it won't crash if pps runs higher.
     buffer_capacity = int(duration_s * expected_pps * 1.5) + 50
     cal = nbvi.NBVICalibrator(
         buffer_capacity=buffer_capacity,
         mvs_window_size=window_size,
-        gain_locked=True,  # matches this project's GAIN_LOCK_MODE="auto" hardware default
+        gain_locked=True,
     )
 
     t_end = time.time() + duration_s
@@ -108,8 +150,8 @@ def run_calibration(rx, duration_s, window_size, expected_pps=20):
 
     return band, mvs
 
+
 def variance_to_confidence(variance, threshold, cap_multiplier=2.0):
-    # unwrap single-element arrays/lists, coerce to plain float
     if hasattr(variance, "__len__") and not isinstance(variance, (str, bytes)):
         variance = float(variance[0]) if len(variance) else 0.0
     else:
@@ -122,13 +164,113 @@ def variance_to_confidence(variance, threshold, cap_multiplier=2.0):
     pct = (variance / (threshold * cap_multiplier)) * 100
     return max(0.0, min(100.0, pct))
 
+
 def variance_to_confidence_sigmoid(variance, threshold, steepness=6.0):
     if threshold is None or threshold <= 0:
         return 0.0
     x = variance / threshold
-    return 100 / (1 + math.exp(-steepness * (x - 1)))  # 50% at variance==threshold
+    return 100 / (1 + math.exp(-steepness * (x - 1)))
 
-def main():
+def run_sync_detection(args, rx, telemetry_queue, loop):
+    """Synchronous detection loop running in a thread pool executor."""
+    if args.skip_calibration:
+        band = list(DEFAULT_BAND)
+        mvs = MVSDetector(band=band, window_size=args.mvs_window, gain_locked=True)
+        print(f"Skipping calibration - using DEFAULT_BAND: {band}, no adaptive threshold.")
+    else:
+        band, mvs = run_calibration(rx, args.calibration_seconds, args.mvs_window)
+
+    ml = MLDetector(model_path=args.model, window_size=args.ml_window)
+
+    dr = DeadReckoner(
+        wheel_radius_m=WHEEL_RADIUS_M,
+        ticks_per_rev=TICKS_PER_REV,
+        wheelbase_m=WHEELBASE_M,
+        gyro_fsr_dps=GYRO_FSR_DPS,
+    )
+
+    breath_hampel = HampelFilter()
+    breath_ts = deque()
+    breath_vals = deque()
+    last_breath_eval = 0.0
+    last_breath_result = None
+
+    # Spectrogram state
+    spectrogram_processor = SpectrogramProcessor()
+    last_spectrogram_row = None          # <-- NEW: cache, so every message can carry a row
+
+    print(f"\n{'-'*60}")
+    print("Live detection - Ctrl+C to stop")
+    print(f"{'-'*60}\n")
+
+    n_packets = 0
+
+    try:
+        while True:
+            try:
+                packet = rx.recv(timeout=1.0)
+            except Empty:
+                continue
+
+            n_packets += 1
+
+            spectrogram_row = None
+            if spectrogram_processor is not None:
+                spectrogram_row = spectrogram_processor.push(packet.amplitudes, band)
+
+
+            mvs_state, mvs_variance = mvs.process(packet.amplitudes)
+            ml_result = ml.process(packet.amplitudes)
+            mvs_confidence = variance_to_confidence(mvs_variance, mvs.threshold)
+
+            if packet.odom is not None and packet.odom.fresh:
+                dr.update(packet.odom)
+            pose = dr.pose
+
+            ts_sec = packet.timestamp / 1e6
+            raw_val = band_amplitude(packet.amplitudes, band)
+            filtered_val = breath_hampel.filter(raw_val)
+            breath_ts.append(ts_sec)
+            breath_vals.append(filtered_val)
+            while breath_ts and ts_sec - breath_ts[0] > BREATH_WINDOW_SEC:
+                breath_ts.popleft()
+                breath_vals.popleft()
+
+            if mvs_state != MOTION and ts_sec - last_breath_eval >= BREATH_TICK_SEC:
+                last_breath_eval = ts_sec
+                if len(breath_ts) >= BREATH_RESAMPLE_HZ * 30:
+                    arr_ts = np.array(breath_ts)
+                    arr_vals = np.array(breath_vals)
+                    last_breath_result = detect_breath(arr_ts, arr_vals)
+
+            # Spectrogram processing — always attach the most recent row,
+            # even on packets where push() returns None (i.e. between hops).
+            # This guarantees csi_spectrogram_row is present on every
+            # outgoing message once the buffer has filled at least once,
+            # instead of only appearing on the ~1-in-N packets that land
+            # exactly on a hop boundary.
+            if spectrogram_processor is not None:
+                new_row = spectrogram_processor.push(packet.amplitudes, band)
+                if new_row is not None:
+                    last_spectrogram_row = new_row
+            spectrogram_row = last_spectrogram_row
+
+            result = build_json(packet, mvs_state, mvs_variance, mvs.threshold,
+                                mvs_confidence, ml_result, rx.dropped, band, ml.enabled,
+                                pose, last_breath_result, spectrogram_row)
+            print(json.dumps(result))
+
+            try:
+                loop.call_soon_threadsafe(telemetry_queue.put_nowait, result)
+            except asyncio.QueueFull:
+                pass
+
+    except KeyboardInterrupt:
+        print("\nStopping detection loop...")
+    finally:
+        print(f"Total packets: {n_packets}, dropped: {rx.dropped}")
+
+async def main_async():
     ap = argparse.ArgumentParser()
     ap.add_argument("--interface", required=True, help="e.g. wlp2s0")
     ap.add_argument("--port", type=int, default=5005)
@@ -147,65 +289,30 @@ def main():
     rx_thread.start()
     print(f"Listening for CSI on {args.interface}:{args.port} ...")
 
-    if args.skip_calibration:
-        band = list(DEFAULT_BAND)
-        mvs = MVSDetector(band=band, window_size=args.mvs_window, gain_locked=True)
-        print(f"Skipping calibration - using DEFAULT_BAND: {band}, no adaptive threshold.")
-    else:
-        band, mvs = run_calibration(rx, args.calibration_seconds, args.mvs_window)
+    loop = asyncio.get_running_loop()
 
-    ml = MLDetector(model_path=args.model, window_size=args.ml_window)
+    server = await websockets.serve(ws_handler, "127.0.0.1", 8080)
+    print("WebSocket server listening on ws://127.0.0.1:8080")
 
-    dr = DeadReckoner(
-        wheel_radius_m=WHEEL_RADIUS_M,
-        ticks_per_rev=TICKS_PER_REV,
-        wheelbase_m=WHEELBASE_M,
-        gyro_fsr_dps=GYRO_FSR_DPS,
+    broadcast_task = asyncio.create_task(broadcast_loop())
+    detection_task = asyncio.create_task(
+        asyncio.to_thread(run_sync_detection, args, rx, telemetry_queue, loop)
     )
 
-    print(f"\n{'-'*60}")
-    print("Live detection - Ctrl+C to stop")
-    print(f"{'-'*60}\n")
-
-    last_mvs_state = None
-    n_packets = 0
-
     try:
-        global ws
-
-        try:
-            ws = websocket.create_connection("ws://127.0.0.1:8080")
-        except Exception as e:
-            print(f"WebSocket connect failed: {e}")
-
-
-        while True:
-            try:
-                packet = rx.recv(timeout=1.0)
-            except Empty:
-                continue
-
-            mvs_state, mvs_variance = mvs.process(packet.amplitudes)
-            ml_result = ml.process(packet.amplitudes)
-            mvs_confidence = variance_to_confidence(mvs_variance, mvs.threshold)  # no trailing comma
-
-            if packet.odom is not None and packet.odom.fresh:
-                dr.update(packet.odom)
-            pose = dr.pose
-
-            result = build_json(packet, mvs_state, mvs_variance, mvs.threshold,
-                                mvs_confidence, ml_result, rx.dropped, band, ml.enabled, pose)
-            print(json.dumps(result))
-            ws_send(result)                        # was: print(json.dumps(result))
-
-
+        await asyncio.gather(server.wait_closed(), detection_task)
     except KeyboardInterrupt:
-        print("\nStopping...")
+        print("\nShutting down...")
     finally:
+        broadcast_task.cancel()
+        try:
+            await broadcast_task
+        except asyncio.CancelledError:
+            pass
         rx.stop()
-        ws.close()
-        print(f"Total packets: {n_packets}, dropped: {rx.dropped}")
+        server.close()
+        await server.wait_closed()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())

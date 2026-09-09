@@ -1,6 +1,6 @@
 export type ConnectionStatus = 'awaiting' | 'live' | 'offline';
 
-export type MvsState = 'idle' | 'detecting' | 'confirmed';
+export type MvsState = string;
 
 export interface MvsData {
   state: MvsState;
@@ -42,7 +42,7 @@ export interface Telemetry {
   rssi: number;
   dropped: number;
   band: number[];
-  temperature_c: number;
+  temperature_c?: number;
   mvs: MvsData;
   ml: MlData;
   breath: BreathData;

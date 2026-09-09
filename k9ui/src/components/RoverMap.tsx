@@ -90,13 +90,14 @@ export function RoverMap() {
     () => loadCachedOrigin() ?? NEUTRAL_ORIGIN
   );
   const [locationUnavailable, setLocationUnavailable] = useState(false);
+
   const mountedRef = useRef(true);
 
   const { telemetry, connectionStatus } = useTelemetry();
 
   // Init map — always renders immediately, never gated on data
   useEffect(() => {
-    mountedRef.current = true;
+    if (!mountedRef.current) return;
     if (!containerRef.current || mapRef.current) return;
 
     const initialOrigin = loadCachedOrigin() ?? NEUTRAL_ORIGIN;
@@ -139,7 +140,6 @@ export function RoverMap() {
     ) {
       navigator.geolocation.getCurrentPosition(
         (position: GeolocationPosition) => {
-          if (!mountedRef.current) return;
           const loc: GpsOrigin = {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
@@ -149,7 +149,6 @@ export function RoverMap() {
           map.setView([loc.latitude, loc.longitude], MAP_ZOOM, { animate: true });
         },
         () => {
-          if (!mountedRef.current) return;
           setLocationUnavailable(true);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
@@ -201,10 +200,7 @@ export function RoverMap() {
 
     return () => {
       mountedRef.current = false;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      if (mapRef.current) mapRef.current.remove();
       roverMarkerRef.current = null;
       moveCircleRef.current = null;
       breathCircleRef.current = null;
@@ -229,14 +225,18 @@ export function RoverMap() {
     mapRef.current.setView([origin.latitude, origin.longitude], MAP_ZOOM, {
       animate: true,
     });
-  }, [origin.latitude, origin.longitude]);
+  }, [origin]);
 
   // Update from telemetry
   useEffect(() => {
     if (!mountedRef.current) return;
     if (!telemetry || !mapRef.current || !roverMarkerRef.current) return;
+    if (telemetry.pose == null) return;
 
-    const pos = poseToLatLng(telemetry.pose, origin);
+    const pos = poseToLatLng(
+      { x: telemetry.pose.x ?? 0, y: telemetry.pose.y ?? 0 },
+      origin
+    );
     const rover = roverMarkerRef.current;
     const moveCircle = moveCircleRef.current;
     const breathCircle = breathCircleRef.current;
@@ -245,7 +245,7 @@ export function RoverMap() {
     const isOffline = connectionStatus === 'offline';
     setStale(telemetry.stale || isOffline);
 
-    rover.setIcon(createRoverIcon(telemetry.pose.theta_deg, telemetry.stale));
+    rover.setIcon(createRoverIcon(telemetry.pose.theta_deg ?? 0, telemetry.stale));
     rover.setLatLng([pos.lat, pos.lng]);
     sweepMarkerRef.current?.setLatLng([pos.lat, pos.lng]);
 
@@ -255,7 +255,7 @@ export function RoverMap() {
       trail?.setLatLngs(trailPointsRef.current);
     }
 
-    const moveConf = telemetry.mvs.confidence;
+    const moveConf = telemetry.mvs?.confidence ?? 0;
     if (moveConf > 50 && moveCircle) {
       const opacity = ((moveConf - 50) / 50) * 0.45;
       moveCircle.setLatLng([pos.lat, pos.lng]);
@@ -268,7 +268,7 @@ export function RoverMap() {
       moveCircle.setStyle({ fillOpacity: 0, opacity: 0 });
     }
 
-    const breathConf = telemetry.breath.confidence;
+    const breathConf = telemetry.breath?.confidence ?? 0;
     if (breathConf > 50 && breathCircle) {
       const opacity = ((breathConf - 50) / 50) * 0.45;
       breathCircle.setLatLng([pos.lat, pos.lng]);
@@ -321,9 +321,7 @@ export function RoverMap() {
     sweepMarkerRef.current = sweepMarker;
 
     return () => {
-      if (mountedRef.current) {
-        sweepMarker.remove();
-      }
+      sweepMarker.remove();
       sweepMarkerRef.current = null;
     };
   }, [origin.latitude, origin.longitude]);
@@ -355,7 +353,7 @@ export function RoverMap() {
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
             <span className="font-mono text-[10px] text-cyan-300">
               {telemetry
-                ? `${telemetry.pose.x.toFixed(1)}, ${telemetry.pose.y.toFixed(1)}m · ${telemetry.pose.theta_deg.toFixed(0)}°`
+                ? `${telemetry.pose.x?.toFixed(1) ?? '—'}, ${telemetry.pose.y?.toFixed(1) ?? '—'}m · ${telemetry.pose.theta_deg?.toFixed(0) ?? '—'}°`
                 : 'awaiting pose…'}
             </span>
           </div>

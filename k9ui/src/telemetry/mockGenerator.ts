@@ -243,12 +243,10 @@ export function createHistoryTracker() {
   const history: TelemetryHistory = prefillHistory();
 
   function update(t: Telemetry): TelemetryHistory {
-    const now = Date.now();
-
-    // Defensive: ensure all required nested objects exist
     const mvs = t.mvs ?? { state: 'idle' as const, variance: 0, threshold: 5.22, confidence: 0 };
     const breath = t.breath ?? { rate_bpm: 0, snr: 0, confidence: 0 };
     const ml = t.ml ?? { ready: true, score: null, detection: null, enabled: true };
+    const now = Date.now();
 
     history.motion.push({
       t: now,
@@ -267,7 +265,7 @@ export function createHistoryTracker() {
       detection: ml.detection,
     });
 
-    history.spectrogram.push(t.csi_spectrogram_row ?? []);
+    history.spectrogram.push(t.csi_spectrogram_row);
 
     // Trim — always maintain exactly HISTORY_LEN points for charts
     if (history.motion.length > HISTORY_LEN) history.motion.shift();

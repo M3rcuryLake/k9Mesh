@@ -19,10 +19,13 @@ UDP_PORT = 5005
 HEADER_FMT = "<IIHBB"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
-# Odometry block: ticksL, ticksR, ax, ay, az, gx, gy, gz, mpu_ok
+# Odometry block: ticksL, ticksR, ax, ay, az, gx, gy, gz, temp_c_x10, mpu_ok
 # ticks as signed 32-bit (wheel encoders can accumulate past int16 range),
-# IMU axes as signed 16-bit (native MPU9250 register width), mpu_ok as uint8
-ODOM_FMT = "<iihhhhhhB"
+# IMU axes as signed 16-bit (native MPU9250 register width), temp as signed
+# 16-bit tenths of a degree C (fits the -40..85degC MPU9250 range with one
+# decimal place of precision, avoids shipping a float over the wire), mpu_ok
+# as uint8
+ODOM_FMT = "<iihhhhhhhB"
 ODOM_SIZE = struct.calcsize(ODOM_FMT)
 
 # Import HT20 constants from config
@@ -68,13 +71,18 @@ def poll_odometry():
     line, _, _odom_buf = _odom_buf.partition(b"\n")
     try:
         parts = line.decode().strip().split(",")
-        if len(parts) != 9:
+        # ticksL,ticksR,ax,ay,az,gx,gy,gz,tempC,mpu_ok -- tempC is the WROOM's
+        # "%.1f" float field, everything else is an int.
+        if len(parts) != 10:
             return None
-        ticksL, ticksR, ax, ay, az, gx, gy, gz, mpu_ok = map(int, parts)
+        ticksL, ticksR, ax, ay, az, gx, gy, gz = map(int, parts[:8])
+        temp_c = float(parts[8])
+        mpu_ok = int(parts[9])
         return {
             "ticksL": ticksL, "ticksR": ticksR,
             "ax": ax, "ay": ay, "az": az,
             "gx": gx, "gy": gy, "gz": gz,
+            "temp_c": temp_c,
             "mpu_ok": bool(mpu_ok),
         }
     except (ValueError, UnicodeError):
@@ -330,6 +338,7 @@ def main():
         "ticksL": 0, "ticksR": 0,
         "ax": 0, "ay": 0, "az": 0,
         "gx": 0, "gy": 0, "gz": 0,
+        "temp_c": 0.0,
         "mpu_ok": False,
     }
 
@@ -371,6 +380,15 @@ def main():
                 EXPECTED_CSI_LEN
             )
 
+            # temp_c is a float on the wire (WROOM's "%.1f"); pack it as
+            # tenths-of-a-degree int16 to keep the struct fixed-width and
+            # avoid a 4-byte float just for one decimal place of precision.
+            # Clamp defensively -- MPU9250 spec range is -40..85degC, but a
+            # garbled/partial UART line getting past poll_odometry's parse
+            # shouldn't be able to overflow an int16 field either way.
+            temp_c_x10 = int(round(last_odom["temp_c"] * 10))
+            temp_c_x10 = max(-32768, min(32767, temp_c_x10))
+
             struct.pack_into(
                 ODOM_FMT,
                 tx_buffer,
@@ -383,6 +401,7 @@ def main():
                 last_odom["gx"],
                 last_odom["gy"],
                 last_odom["gz"],
+                temp_c_x10,
                 1 if last_odom["mpu_ok"] else 0,
             )
 

@@ -87,7 +87,6 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // Defensive: validate required fields exist
         if (!parsed || typeof parsed !== 'object') {
           console.warn('Dropped invalid telemetry frame');
           return;

@@ -10,13 +10,17 @@ import struct
 HEADER_FMT = "<IIHbB"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
-# ticksL(i32), ticksR(i32), ax,ay,az,gx,gy,gz(i16 x6), mpu_ok(u8)
-# Must match the ESP32 firmware's ODOM_FMT exactly. The firmware does NOT
-# send a "fresh" bit on the wire -- odometry updates at ~10Hz while CSI can
-# arrive faster, so the same odom block gets repeated across several CSI
-# packets. We derive freshness here by diffing against the previous sample.
+# ticksL(i32), ticksR(i32), ax,ay,az,gx,gy,gz(i16 x6), temp_c_x10(i16),
+# mpu_ok(u8)
+# Must match the ESP32 firmware's ODOM_FMT exactly. temp_c_x10 is the
+# MPU9250 die temperature in tenths of a degree C (divide by 10 for float
+# degC) -- sent as int16 rather than float to keep the struct fixed-width.
+# The firmware does NOT send a "fresh" bit on the wire -- odometry updates
+# at ~10Hz while CSI can arrive faster, so the same odom block gets repeated
+# across several CSI packets. We derive freshness here by diffing against
+# the previous sample.
 # Wire layout is [header][odom_block][csi_data], matching main.py.
-ODOM_FMT = "<iihhhhhhB"
+ODOM_FMT = "<iihhhhhhhB"
 ODOM_SIZE = struct.calcsize(ODOM_FMT)
 
 NUM_SUBCARRIERS = 64  # HT20
@@ -32,6 +36,7 @@ class OdomSample:
     gx: int
     gy: int
     gz: int
+    temp_c: float
     mpu_ok: bool
     fresh: bool  # False if this is a repeat of the last sample sent (odom is slower than CSI rate)
 
@@ -105,13 +110,14 @@ class CSIReceiver:
 
         odom_bytes = payload[odom_offset:csi_offset]
         odom_fields = struct.unpack(ODOM_FMT, odom_bytes)
-        ticks_l, ticks_r, ax, ay, az, gx, gy, gz, mpu_ok = odom_fields
+        ticks_l, ticks_r, ax, ay, az, gx, gy, gz, temp_c_x10, mpu_ok = odom_fields
+        temp_c = temp_c_x10 / 10.0
 
         fresh = odom_fields != self._last_odom_raw
         self._last_odom_raw = odom_fields
 
         odom = OdomSample(ticks_l, ticks_r, ax, ay, az, gx, gy, gz,
-                           bool(mpu_ok), fresh)
+                           temp_c, bool(mpu_ok), fresh)
 
         csi_raw = payload[csi_offset:csi_offset + length]
         if len(csi_raw) < length:

@@ -17,8 +17,8 @@ async def handler(websocket):
         print(f"Client disconnected ({len(connected)} total)")
 
 async def main():
-    async with websockets.serve(handler, "localhost", 8080):
-        print("WS test server listening on ws://localhost:8080")
+    async with websockets.serve(handler, "127.0.0.1", 8080):
+        print("WS test server listening on ws://127.0.0.1:8080")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
