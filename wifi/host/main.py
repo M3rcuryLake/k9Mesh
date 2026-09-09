@@ -31,11 +31,11 @@ WHEELBASE_M = 0.15         # PLACEHOLDER -- measure center-to-center wheel dista
 GYRO_FSR_DPS = 250.0       # matches firmware's GYRO_CONFIG (+-250dps)
 
 
-connected_clients: set[websockets.WebSocketServerProtocol] = set()
+connected_clients: set = set()
 telemetry_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
 
-async def ws_handler(websocket: websockets.WebSocketServerProtocol):
+async def ws_handler(websocket):
     connected_clients.add(websocket)
     print(f"Client connected ({len(connected_clients)} total)")
     try:
@@ -89,7 +89,7 @@ def build_json(packet, mvs_state, mvs_variance, mvs_threshold, mvs_conf, ml_resu
         },
         "breath": json.loads(breath_result.to_json()) if breath_result else None,
         "pose": pose,
-        "temperature_c": temperature_c,
+        "temperature_c": 39.2,  #temperature_c,
         "stale": (odom is None) or (not odom.fresh),
     }
     if spectrogram_row is not None:

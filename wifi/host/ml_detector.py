@@ -31,29 +31,43 @@ class MLDetector:
         sample_rate_hz=100.0,
         threshold=0.5,
     ):
+        BASE_DIR = Path(__file__).resolve().parent
+        MODEL_PATH = BASE_DIR.parent / "models" / model_path
+
         self.band = band or list(DEFAULT_BAND)
         self.window_size = window_size
         self.threshold = threshold
 
-        self.hampel = HampelFilter(hampel_window, hampel_threshold) if hampel_enabled else None
-        self.lowpass = LowPassFilter(lowpass_cutoff_hz, sample_rate_hz) if lowpass_enabled else None
+        self.hampel = (
+            HampelFilter(hampel_window, hampel_threshold)
+            if hampel_enabled else None
+        )
+
+        self.lowpass = (
+            LowPassFilter(lowpass_cutoff_hz, sample_rate_hz)
+            if lowpass_enabled else None
+        )
+
         self.turbulence_window = deque(maxlen=window_size)
 
+        # Model starts unloaded/disabled
         self.model = None
         self.scaler = None
         self.enabled = False
 
-        path = Path(model_path)
-        if path.exists():
-            with open(path, "rb") as f:
+        # Load model
+        if MODEL_PATH.exists():
+            with open(MODEL_PATH, "rb") as f:
                 bundle = pickle.load(f)
+
             self.model = bundle["model"]
             self.scaler = bundle.get("scaler")
             self.enabled = True
-            print(f"[MLDetector] Loaded model from {path}")
+
+            print(f"[MLDetector] Loaded model from {MODEL_PATH}")
         else:
-            print(f"[MLDetector] No model at {path} - ML detection disabled "
-                  f"until you run collect_data.py + train_model.py")
+            print(f"[MLDetector] No model at {MODEL_PATH} - ML detection disabled")
+
 
     def _band_amplitudes(self, amplitudes):
         n = len(amplitudes)
