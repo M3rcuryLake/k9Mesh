@@ -38,7 +38,11 @@ export function useProcessControl() {
       const data = await fetchJSON(`${base}/api/status`);
       if (!mountedRef.current) return;
       if (data.running) {
-        setStatus('running');
+        if (data.firstPacket) {
+          setStatus('running');
+        } else {
+          setStatus('starting');
+        }
         setPid(data.pid ?? null);
       } else if (data.error && status !== 'starting' && status !== 'stopping') {
         setStatus('error');
@@ -76,7 +80,6 @@ export function useProcessControl() {
           setErrorMsg(data.error);
           return false;
         }
-        setStatus('running');
         setPid(data.pid ?? null);
         return true;
       } catch (err) {

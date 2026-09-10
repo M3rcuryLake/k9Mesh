@@ -8,8 +8,10 @@ import { mkdirSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.BRIDGE_PORT || 3001;
-const WIFI_PATH = process.env.K9MESH_WIFI_PATH || resolve(__dirname, '../wifi');
-const STATIC_DIR = resolve(__dirname, '../dist');
+const WIFI_PATH = process.env.K9MESH_WIFI_PATH || resolve(__dirname, '../../wifi');
+const STATIC_DIR = process.env.K9MESH_STATIC_DIR 
+  ? resolve(process.env.K9MESH_STATIC_DIR)
+  : resolve(__dirname, '../dist');
 
 const app = express();
 app.use(cors());
@@ -17,6 +19,7 @@ app.use(express.json());
 
 let childProc = null;
 let lastError = null;
+let firstPacketReceived = false;
 
 app.post('/api/start', (req, res) => {
   const { interface: iface, calibrationSeconds, skipCalibration } = req.body || {};
@@ -29,6 +32,8 @@ app.post('/api/start', (req, res) => {
     return res.status(409).json({ error: 'Process already running' });
   }
 
+  firstPacketReceived = false;
+
   const hostDir = resolve(WIFI_PATH, 'host');
   if (!existsSync(hostDir)) {
     return res.status(500).json({
@@ -36,7 +41,7 @@ app.post('/api/start', (req, res) => {
     });
   }
 
-  const modelPath = resolve(hostDir, 'model.pkl');
+  const modelPath = resolve(WIFI_PATH, 'models', 'model.pkl');
   if (!existsSync(modelPath)) {
     return res.status(500).json({
       error: `Model file not found: ${modelPath}`,
@@ -44,11 +49,13 @@ app.post('/api/start', (req, res) => {
   }
 
   const args = [
-    'host/main.py',
+    'main.py',
     '--interface',
     iface.trim(),
     '--model',
-    'model.pkl',
+    modelPath,
+    '--port',
+    '5005',
   ];
 
   if (skipCalibration) {
@@ -70,7 +77,12 @@ app.post('/api/start', (req, res) => {
   lastError = null;
   const pid = childProc.pid;
 
-  childProc.stdout?.on('data', () => {});
+  childProc.stdout?.on('data', (chunk) => {
+    const text = chunk.toString();
+    if (text.includes('FIRST_PACKET_RECEIVED')) {
+      firstPacketReceived = true;
+    }
+  });
   childProc.stderr?.on('data', (chunk) => {
     const text = chunk.toString().trim();
     if (text) lastError = text;
@@ -116,13 +128,14 @@ app.get('/api/status', (req, res) => {
     running: Boolean(running),
     pid: running ? childProc.pid : null,
     error: lastError,
+    firstPacket: firstPacketReceived,
   });
 });
 
 // Serve built static files
 if (existsSync(STATIC_DIR)) {
   app.use(express.static(STATIC_DIR));
-  app.get('*', (req, res) => {
+  app.get('/{*any}', (req, res) => {
     res.sendFile(resolve(STATIC_DIR, 'index.html'));
   });
 } else {

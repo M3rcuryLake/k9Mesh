@@ -204,6 +204,7 @@ def run_sync_detection(args, rx, telemetry_queue, loop):
     print(f"{'-'*60}\n")
 
     n_packets = 0
+    first_packet_reported = False
 
     try:
         while True:
@@ -213,6 +214,10 @@ def run_sync_detection(args, rx, telemetry_queue, loop):
                 continue
 
             n_packets += 1
+
+            if not first_packet_reported:
+                print("FIRST_PACKET_RECEIVED", flush=True)
+                first_packet_reported = True
 
             spectrogram_row = None
             if spectrogram_processor is not None:

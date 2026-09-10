@@ -1,210 +1,135 @@
-# Rover Controller — Complete Compiled Datasheet
+# Multi-ESP32 Teleoperated Unstructured terrain-traversal rover for SAR/CSSR — system datasheet
 
-4WD search-and-rescue rover: STM32-based odometry/motor hub, dual FC-03 wheel encoders, MPU9250 IMU, NRF24L01 manual-override radio, and ESP32 WiFi-CSI/MQTT link.
+| | |
+|---|---|
+| **Document rev.** | 1.2 |
+| **Boards covered** | ESP32 (TX, joystick transmitter) · ESP32 (RX, motor/sensor receiver) · ESP32-S3 (odometry sink) |
+| **Link** | ESP-NOW, 2.4GHz, unencrypted, channel 0 |
+| **Status** | All power sources confirmed. TX is USB-tethered as an interim setup — see Section 7 |
 
 ---
 
-## 1. System architecture
+## 1. System overview
+
+A hand-held ESP32 transmitter reads a two-axis analog joystick and a push-button, and broadcasts a 5-byte struct over ESP-NOW to a fixed receiver MAC address at 20Hz. The ESP32 receiver decodes the struct into arcade-mixed left/right motor commands, drives an L298N dual H-bridge, and separately reads two FC-03 wheel-speed encoders and an MPU9250 IMU. The receiver relays packed odometry (encoder ticks + accel/gyro/temp) over UART2 to a companion ESP32-S3, which is expected to run the higher-level CSI/dashboard workload described elsewhere in this project.
 
 ```
-                    ┌─────────────┐
-        ┌──────────►│   L298N     │──► Left motors (parallel)
-        │           │  (motor drv)│──► Right motors (parallel)
-        │           └─────────────┘
-        │
-        │           ┌─────────────┐
-        ├──────────►│  MPU9250    │  (I2C1 — heading/accel)
-        │           └─────────────┘
-        │
-        │           ┌─────────────┐
-STM32 ──┼──────────►│ FC-03 × 2   │  (EXTI — wheel ticks)
-(hub)   │           └─────────────┘
-        │
-        │           ┌─────────────┐
-        ├──────────►│  NRF24L01   │  (SPI1 — manual override link)
-        │           └─────────────┘
-        │
-        │           ┌─────────────┐
-        └───UART1───►│   ESP32    │──► WiFi CSI + MQTT (own supply)
-                     │  (DevKit)  │
-                     └─────────────┘
+ TX (ESP32)                         RX (ESP32)                      S3 (ESP32-S3)
+ ┌────────────┐   ESP-NOW 2.4GHz    ┌────────────┐   UART2 + 3.3V   ┌────────────┐
+ │ Joystick   │ ──────────────────> │ L298N      │ ───────────────> │ Odometry   │
+ │ + button   │   x, y, stop        │ FC-03 x2   │  ticks, IMU +    │ sink       │
+ └────────────┘                     │ MPU9250    │  shared 3V3 rail │            │
+                                    └────────────┘                  └────────────┘
 ```
 
 ---
 
-## 2. STM32F103C8T6 ("Blue Pill") — main controller
+## 2. Board summary
 
-| Spec | Value |
-|---|---|
-| Core | ARM Cortex-M3, 72 MHz |
-| Flash / RAM | 64 KB / 20 KB |
-| Logic voltage | 3.3V (most GPIOs 5V-tolerant — verify per pin) |
-| Onboard regulator | AMS1117-3.3, ~800mA rated, realistically budget less under shared load |
-| I2C | I2C1 (PB6/PB7) |
-| SPI | SPI1 (PA4–PA7) |
-| USART | USART1 (PA9/PA10) |
-| PWM timers | TIM1–TIM4 |
-| EXTI | One interrupt line per pin number; PB0 and PA0 share EXTI0 — can't use both at once |
+| Board | Role | MCU | Power source | Status |
+|---|---|---|---|---|
+| **TX** | Joystick transmitter | ESP32 | USB (5V), through onboard 3.3V LDO | Confirmed |
+| **RX** | Motor + sensor receiver | ESP32 | 4×AA, 6V nominal, through onboard 3.3V LDO | Confirmed |
+| **RX motor stage** | L298N dual H-bridge | — | 2S Li-ion, 7.4V nominal, 15A discharge-rated pack | Confirmed |
+| **S3** | Odometry sink | ESP32-S3 | 3.3V, fed directly from RX's `3V3` pin | Confirmed |
 
-### Full pin map
+---
 
-| Function | Pin(s) | Peripheral |
+## 3. Pinout — TX (joystick transmitter)
+
+### 3.1 Signal pins
+
+| # | ESP32 pin | ADC unit | Dir | Net | Signal | Range | Notes |
+|---|---|---|---|---|---|---|---|
+| TX-1 | `GPIO34` | ADC1_CH6 | ← | Joystick `VRx` | Analog, raw | 0–4095 (0–3.3V) | X axis / turn. ADC1 — safe to sample with WiFi radio active |
+| TX-2 | `GPIO35` | ADC1_CH7 | ← | Joystick `VRy` | Analog, raw | 0–4095 (0–3.3V) | Y axis / throttle. ADC1 — same WiFi-safety note |
+| TX-3 | `GPIO32` | — | ← | Joystick `SW` | Digital, active-low | 3.3V logic | `INPUT_PULLUP`; pressed = LOW = deadman/stop |
+
+### 3.2 Power & ground
+
+| # | ESP32 pin | Dir | Net | Signal | Voltage | Notes |
+|---|---|---|---|---|---|---|
+| TX-4 | `3V3` | → | Joystick `VCC` | Power | 3.3V | Not present in firmware — physical wiring only |
+| TX-5 | `GND` | — | Joystick `GND` | Ground | — | |
+| TX-6 | `5V` (or `VIN`) | ← | USB (host/power bank) | Power in | 5V nominal | Through onboard 3.3V LDO — tethered operation, no battery on TX for now |
+| TX-7 | `GND` | — | USB | Ground | — | Ties into TX-5 |
+
+---
+
+## 4. Pinout — RX (motor + sensor receiver)
+
+### 4.1 Signal pins
+
+| # | ESP32 pin | Dir | Net | Peripheral pin | Signal | Voltage | Notes |
+|---|---|---|---|---|---|---|---|
+| RX-1 | `GPIO25` | → | L298N | `ENA` | PWM | 3.3V logic | Left motor speed |
+| RX-2 | `GPIO26` | → | L298N | `IN1` | Direction | 3.3V logic | Left motor direction A |
+| RX-3 | `GPIO27` | → | L298N | `IN2` | Direction | 3.3V logic | Left motor direction B |
+| RX-4 | `GPIO14` | → | L298N | `IN3` | Direction | 3.3V logic | Right motor direction A |
+| RX-5 | `GPIO4`  | → | L298N | `IN4` | Direction | 3.3V logic | Right motor direction B |
+| RX-6 | `GPIO33` | → | L298N | `ENB` | PWM | 3.3V logic | Right motor speed |
+| RX-7 | `GPIO34` | ← | Left FC-03 | `DO` | Pulse (RISING) | 3.3V logic | Input-only pin, interrupt-driven |
+| RX-8 | `GPIO35` | ← | Right FC-03 | `DO` | Pulse (RISING) | 3.3V logic | Input-only pin, interrupt-driven |
+| RX-9 | `GPIO21` | ↔ | MPU9250 | `SDA` | I2C data | 3.3V | 400kHz |
+| RX-10 | `GPIO22` | → | MPU9250 | `SCL` | I2C clock | 3.3V | 400kHz |
+| RX-11 | `GPIO17` | → | S3 | `RX` | UART2 TX | 3.3V logic | 115200 8N1 |
+| RX-12 | `GPIO16` | ← | S3 | `TX` | UART2 RX | 3.3V logic | 115200 8N1 |
+| — | — | — | Left FC-03 | `A0` | Analog (unused) | — | Not connected — firmware never reads it |
+| — | — | — | Right FC-03 | `A0` | Analog (unused) | — | Not connected — firmware never reads it |
+
+### 4.2 Power & ground
+
+| # | ESP32 pin | Dir | Net | Peripheral pin | Signal | Voltage | Notes |
+|---|---|---|---|---|---|---|---|
+| RX-13 | `3V3` | → | MPU9250 | `VCC` | Power | 3.3V | MPU9250 is 3.3V-native — never wire to 5V |
+| RX-14 | `3V3` | → | Left FC-03 | `VCC` | Power | 3.3V | 3.3V preferred over 5V — reduces comparator noise/bounce on `DO` |
+| RX-15 | `3V3` | → | Right FC-03 | `VCC` | Power | 3.3V | Same as above |
+| RX-16 | `GND` | — | MPU9250 | `GND` | Ground | — | |
+| RX-17 | `GND` | — | Left FC-03 | `GND` | Ground | — | |
+| RX-18 | `GND` | — | Right FC-03 | `GND` | Ground | — | |
+| RX-19 | `GND` | — | L298N | `GND` | Ground | — | Common ground meeting point for AA pack, Li-ion pack, and ESP32 |
+| RX-20 | `GND` | — | S3 | `GND` | Ground | — | Required for UART to work reliably |
+| RX-25 | `3V3` | → | S3 | `3V3` / `VCC` | Power | 3.3V | S3 is powered directly off RX's 3.3V rail — not a separate supply |
+| RX-21 | `VIN` (or `5V`) | ← | 4×AA pack | `+` | Power in | 6V nominal (4×1.5V) | Through ESP32's onboard 3.3V LDO — confirm board's max input rating |
+| RX-22 | `GND` | — | 4×AA pack | `–` | Ground | — | Ties into common ground |
+| RX-23 | — | ← | L298N `+12V` terminal | 2S Li-ion `+` | Power in | 7.4V nominal, 15A discharge cap | Does not route through ESP32 |
+| RX-24 | — | — | L298N `GND` | 2S Li-ion `–` | Ground | — | Same common ground as RX-19 |
+
+---
+
+## 5. Recommended operating conditions
+
+| Parameter | Min | Typ | Max | Unit | Notes |
+|---|---|---|---|---|---|
+| Logic supply (all boards) | 3.0 | 3.3 | 3.6 | V | ESP32/ESP32-S3 native rail |
+| TX system input (USB) | 4.75 | 5.0 | 5.25 | V | Interim tethered supply — see Section 7 |
+| RX system input (`VIN`) | — | 6.0 | ~12 | V | 4×AA nominal; upper bound is a typical ESP32 board LDO ceiling, confirm per-board |
+| Motor supply (2S Li-ion) | 6.0 | 7.4 | 8.4 | V | 6.0V = fully discharged cutoff, 8.4V = fully charged |
+| Motor pack discharge current | — | — | 15 | A | Pack rating; L298N itself is typically limited to ~2A/channel continuous — check driver's own rating against motor stall current |
+| FC-03 `VCC` | 3.3 | 3.3 | 5.0 | V | 3.3V recommended on this design to avoid comparator bounce on `DO` |
+| I2C bus speed (MPU9250) | — | 400 | — | kHz | |
+| UART2 (RX ↔ S3) | — | 115200 | — | baud | 8N1 |
+| ESP-NOW report rate (TX) | — | 20 | — | Hz | 50ms loop delay |
+
+## 6. Absolute maximum ratings
+
+| Parameter | Rating | Consequence if exceeded |
 |---|---|---|
-| Motor A/B speed (PWM) | PA0, PA1 | TIM2_CH1, TIM2_CH2 |
-| Motor A/B direction | PB12, PB13, PB14, PB15 | GPIO |
-| MPU9250 SCL / SDA | PB6, PB7 | I2C1 |
-| Left / right encoder pulse | PB0, PB1 | EXTI0, EXTI1 |
-| NRF24L01 SCK/MISO/MOSI | PA5, PA6, PA7 | SPI1 |
-| NRF24L01 CSN / CE | PA4, PA3 | GPIO |
-| NRF24L01 IRQ (optional) | PA2 | EXTI2 |
-| ESP32 link TX / RX | PA9, PA10 | USART1 |
+| Voltage on any 3.3V-logic GPIO | 3.6V | Pin damage / latch-up risk |
+| MPU9250 `VCC` | 3.3V (do not exceed) | Sensor damage — part is not 5V-tolerant |
+| L298N logic-side input from ESP32 | 3.3V logic, referenced to common GND | Ensure `5V-EN` jumper (if present) is **off** to avoid backfeeding the logic rail |
+| ADC2 pins under active WiFi | N/A | Do not use for analog input — readings are invalid/blocked while WiFi is active. TX correctly avoids this by using ADC1 (`GPIO34`/`35`) |
+
+## 7. Notes / errata
+
+- **FC-03 `A0`** is present on the module but unconnected in this design — firmware only reads the comparator's `DO` pulse via `attachInterrupt()`.
+- **FC-03 noise sensitivity**: this sensor is known to be sensitive to interference on `VCC`/`GND`; powering it from a regulator shared with switching loads has been reported to cause bounced/over-counted pulses. 3.3V from the ESP32 is used here specifically to mitigate this.
+- **Encoder input pins** `GPIO34`/`GPIO35` are input-only on the ESP32 — acceptable here since they're read-only interrupt sources, but they cannot be repurposed as outputs elsewhere in the design.
+- **No pull-up configured** on `pinMode(ENCODER_L, INPUT)` — confirm the FC-03's `DO` stage is push-pull (actively driven both directions); if it's open-collector, the line may float and cause spurious `RISING` interrupts.
+- **TX runs off USB for now** — fine on the bench, but a wired/tethered controller is a real constraint for a CSSR field unit (limits range and requires a nearby power bank or laptop). Worth planning a battery option (LiPo + charge module, or the same 4×AA approach as RX) before field trials — flag this in Section 2/3.2 as "interim" rather than final.
+- **RX's 3.3V rail now carries five loads**: MPU9250, two FC-03 encoders, and the entire ESP32-S3 board (RX-25), all off the same onboard LDO that also powers RX's own MCU/radio. A bare ESP32 dev board's LDO is often only rated for a few hundred mA; the ESP32-S3 alone can pull 300–500mA in short WiFi TX bursts. Worth measuring actual combined current draw on the bench — if the rail sags during a WiFi burst, it can brown out the MPU9250/encoders or reset the S3 mid-transfer. A dedicated 3.3V regulator for the S3 (fed from the 4×AA pack directly, sharing only GND) would remove this risk if you see instability.
+- **ESP-NOW is unencrypted** (`peerInfo.encrypt = false`) and broadcasts to a fixed MAC with `channel = 0` (auto/current channel) — anyone on the same channel with the receiver's MAC address could potentially spoof control packets. Not a concern for a hobby rover, but worth knowing if this ever leaves a trusted network environment.
 
 ---
 
-## 3. L298N — dual H-bridge motor driver
-
-| Spec | Value |
-|---|---|
-| Motor supply (VS) | 5–46V DC |
-| Logic supply (VSS) | 5V, onboard regulator (jumper-selectable) |
-| Max current/channel | ~2A continuous, ~3A peak |
-| Voltage drop | ~1.4–2V across the bridge |
-| Channels | 2 (A = left side, B = right side) |
-
-### Pinout
-
-| Pin | Function | Connects to |
-|---|---|---|
-| ENA | Left speed (PWM) | STM32 PA0 |
-| IN1, IN2 | Left direction | STM32 PB12, PB13 |
-| OUT1, OUT2 | Left motors (front + rear, parallel) | — |
-| ENB | Right speed (PWM) | STM32 PA1 |
-| IN3, IN4 | Right direction | STM32 PB14, PB15 |
-| OUT3, OUT4 | Right motors (front + rear, parallel) | — |
-| 12V | Motor power in | Battery pack (direct, not shared with logic) |
-| 5V | Logic power out | 5V rail strip |
-| GND | Common ground | Shared with all boards |
-
-**4WD wiring note:** both motors on a side must have matching (+)/(−) polarity to OUT1/OUT2 (or OUT3/OUT4) — mismatched polarity makes one wheel per side spin backwards relative to its partner.
-
----
-
-## 4. MPU9250 — 9-DOF IMU
-
-| Spec | Value |
-|---|---|
-| Interface | I2C |
-| Address | 0x68 (0x69 if AD0 high) |
-| Logic voltage | 3.3V |
-| Accel range | ±2/4/8/16 g |
-| Gyro range | ±250/500/1000/2000 °/s |
-| Magnetometer (AK8963) | ±4800 µT, sub-address 0x0C |
-| WHO_AM_I | reg 0x75 → expect 0x71 |
-
-### Pinout
-
-| Pin | Connects to |
-|---|---|
-| VCC | 3.3V rail |
-| GND | Common ground |
-| SCL | STM32 PB6 |
-| SDA | STM32 PB7 |
-| AD0 | GND |
-
-Pull-ups: most breakouts have onboard 10kΩ pull-ups on SDA/SCL already — verify with an I2C scanner before adding external 4.7kΩ resistors.
-
----
-
-## 5. FC-03 — IR photoelectric speed sensor (×2)
-
-| Spec | Value |
-|---|---|
-| Supply | 3.3–5V (LM393 comparator-based, tolerant of a wide range) |
-| Outputs | D0 (digital, thresholded) + A0 (raw analog, unused here) |
-| Adjustment | Onboard potentiometer sets detection threshold |
-
-### Pinout (×2 units)
-
-| Unit | VCC | GND | D0 → STM32 |
-|---|---|---|---|
-| Left encoder | 5V rail | Common GND | PB0 (EXTI0) |
-| Right encoder | 5V rail | Common GND | PB1 (EXTI1) |
-
-Match slot count on both encoder discs — mismatched slot counts silently skew tick-to-distance conversion on one side.
-
----
-
-## 6. NRF24L01 — 2.4GHz radio (manual override link)
-
-| Spec | Value |
-|---|---|
-| Interface | SPI, up to 10 Mbps |
-| Frequency | 2.4–2.525 GHz, 125 channels |
-| Data rate | 250 kbps / 1 Mbps / 2 Mbps |
-| Range | ~100m (basic), ~1km (PA+LNA + external antenna) |
-| Supply | 3.3V strictly — never 5V on any pin |
-| Known issue | TX current spikes brown out cheap onboard regulators — add 100–470µF cap across VCC/GND |
-
-### Pinout
-
-| Pin | Connects to |
-|---|---|
-| VCC | 3.3V rail |
-| GND | Common ground |
-| SCK | STM32 PA5 |
-| MOSI | STM32 PA7 |
-| MISO | STM32 PA6 |
-| CSN | STM32 PA4 |
-| CE | STM32 PA3 |
-| IRQ | STM32 PA2 (optional) |
-
----
-
-## 7. ESP32 — WiFi CSI + MQTT link (confirmed: ESP32-WROOM-32 DevKit)
-
-| Spec | Value |
-|---|---|
-| Module | ESP32-WROOM-32, WiFi + BT, 802.11 b/g/n |
-| Board type | DevKit — micro-USB, onboard USB-serial chip, onboard AMS1117-3.3 regulator |
-| Power in | **VIN** (5V) — do not feed 3V3 pin as an input, it's a regulated output |
-| Role | Micro-ESPectre CSI capture, ML detector, MQTT publish; receives fused pose from STM32 over UART |
-
-### Pinout
-
-| Pin | Connects to | Notes |
-|---|---|---|
-| VIN | Dedicated 5V rail | separate buck converter — do NOT share with L298N's onboard reg or the STM32/sensor rail |
-| GND | Common ground | |
-| UART2 RX (GPIO16) | STM32 PA9 (USART1 TX) | use UART2, not UART0, to avoid clashing with USB-serial flashing lines |
-| UART2 TX (GPIO17) | STM32 PA10 (USART1 RX) | |
-
----
-
-## 8. Power distribution architecture
-
-**Battery pack:** 4×1.5V AA/AAA in series ≈ 6V
-
-| Rail | Fed from | Feeds | Notes |
-|---|---|---|---|
-| Motor supply | Battery pack, direct | L298N OUT1–4 only | Never shared with logic |
-| 5V rail strip | 6V battery pack (via red line) | STM32 (if not USB-powered), FC-03 ×2 | ~1V over nominal 5V spec — fine for LM393-based FC-03, monitor for warmth |
-| 3.3V rail strip | STM32's onboard 3.3V pin | MPU9250, NRF24L01 | Uses STM32's regulator, not raw battery |
-| ESP32 5V | **Dedicated** separate buck converter | ESP32 VIN only | Isolated from all of the above — WiFi TX bursts (300–500mA) would brown out a shared rail |
-| Common GND | — | Every rail and board above | One wire from each rail strip's blue (GND) line back to STM32 GND, tying all islands into a single reference |
-
-### Grounding rule
-
-Every physically separate rail strip, breadboard section, or power source needs **at least one wire back to a single common ground point** (STM32 GND, in this build). Power sources can be separate; ground must not be.
-
----
-
-## 9. Build phase mapping
-
-| Phase | Covers |
-|---|---|
-| 1 — CSI baseline validation | ESP32 + Micro-ESPectre, done independently of the above |
-| 2 — Odometry hardware | L298N, FC-03 ×2, MPU9250 wiring (this document) |
-| 3 — UART pose integration | STM32 ↔ ESP32 link (Section 7) |
-| 4 — Backend fusion/visualization | Software, not covered here |
-| 5 — Field calibration | Hardware tuning (FC-03 threshold pot, encoder disc alignment) |
-| Deferred | Acoustic sensing, multi-AP triangulation |
+*End of document rev. 1.0. Codenamed:Rocky*
