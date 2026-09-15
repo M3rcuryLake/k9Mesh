@@ -330,7 +330,10 @@ Contributions are welcome across embedded systems, RF sensing, signal processing
 
 ## References
 [1] *SA-WiSense: A Blind-Spot-Free Respiration Sensing Framework for Single-Antenna Wi-Fi Devices.*
+
 [2] *TwSense: Highly Robust Through-the-Wall Human Detection Method Based on COTS Wi-Fi Device.*
+
 [3] *VitalCSI: Contactless Respiratory Rate Estimation Using Consumer-Grade Wi-Fi Channel State Information.*
+
 [4] *RaliSense: Extending WiFi Respiratory Detection Range by Rapid Alignment of Dynamic Components.*
 
