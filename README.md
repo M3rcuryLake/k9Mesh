@@ -2,12 +2,11 @@
 
 <div align="center">
 
-### An Open-Source RF Life-Sign Detection Platform for Collapsed Structure Search and Rescue
+### Distributed Wi-Fi CSI Sensing Platform for Life-Sign Detection in Collapsed Structures
 
-**Wi-Fi Channel State Information • Embedded Robotics • Real-Time Signal Processing**
+**Wi-Fi Channel State Information • Embedded Telemetry • Real-Time Signal Processing**
 
-![License](https://img.shields.io/badge/License-MIT-green)
-![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20STM32-blue)
+![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20ESP32--S3-blue)
 ![Status](https://img.shields.io/badge/Status-Active%20Development-orange)
 ![Application](https://img.shields.io/badge/Application-CSSR-red)
 
@@ -17,104 +16,200 @@
 
 ## About
 
-K9Mesh is an open-source RF life-sign detection platform designed for **Collapsed Structure Search and Rescue (CSSR)**.
+K9Mesh is an RF life-sign detection platform for **Collapsed Structure Search and Rescue (CSSR)**. It uses passive Wi-Fi Channel State Information (CSI) from commodity single-antenna ESP32 hardware to detect human motion and estimate respiration rate through visually opaque obstacles, and tags every RF observation with the live pose of a teleoperated rover.
 
-The platform combines Wi-Fi Channel State Information (CSI), embedded robotics and real-time signal processing to detect human motion and respiration through visually opaque obstacles using commodity hardware.
+The sensing core is a laptop-side port and extension of the [Micro-ESPectre](https://github.com/francescopace/micro-espectre) CSI engine. Its stock motion-detection pipeline is preserved: NBVI-selected subcarrier bands → spatial turbulence (σ/CV) → Hampel-filtered moving-variance segmentation against an adaptive baseline threshold — augmented with a trainable MLP classifier over nine turbulence-window statistics running in parallel on the same stream.
 
-Unlike conventional robotic platforms, K9Mesh combines RF sensing with rover localization. Every detection is associated with the rover's estimated position, allowing rescue teams to visualize survivor probability maps instead of isolated sensor readings.
+Beyond motion, K9Mesh adds a dedicated respiration estimator that recovers breathing rate from the sub-Hz amplitude undulations a stationary torso imprints on the channel: the calibrated band is collapsed to a per-packet amplitude scalar, scrubbed by a streaming MAD-based Hampel filter, detrended, resampled to a uniform 10 Hz grid over a 60 s sliding window, and transformed via FFT for a band-limited peak search in **0.15–0.5 Hz (10–30 breaths per minute)**. Detections are gated by spectral SNR (≥ 3) and suppressed while the motion detector reports activity — platform-induced movement dominates the respiratory band — and each estimate ships with confidence, spectral-purity, and harmonic-ratio metrics rather than a bare BPM number.
 
-The system is built around a distributed embedded architecture consisting of an STM32 motion controller, an ESP32 CSI processing node and a mission control backend connected through MQTT.
-
-K9Mesh extends the Micro-ESPectre CSI engine while preserving its original motion detection pipeline. Additional modules perform respiration detection, rover pose synchronization and probabilistic survivor mapping without modifying the core algorithm.
-
-The project is intended as an open research platform for embedded systems, RF sensing and disaster response.
-
----
-
-## Motivation
-
-Locating survivors after structural collapse remains one of the most time-critical stages of disaster response.
-
-Thermal cameras require line of sight. Acoustic sensors depend on victims producing sound. Search dogs remain highly effective but require extensive training and cannot safely access every environment. Professional life-sign radar systems provide excellent performance but are expensive and difficult to deploy at scale.
-
-K9Mesh investigates an alternative approach.
-
-Instead of transmitting dedicated radar signals, the platform analyses disturbances in existing Wi-Fi communication channels. Human movement and respiration introduce measurable changes in Channel State Information that can be processed to estimate the presence of life behind visually opaque obstacles.
-
-The objective is not to replace existing rescue technologies. K9Mesh is designed to provide an additional sensing modality that assists rescue teams in prioritizing search operations.
+Everything runs on off-the-shelf parts — three ESP32-class boards, an L298N drive stage, FC-03 wheel encoders, and an MPU9250 IMU — with a React-based ground control station for live telemetry.
 
 ---
 
 ## System Overview
 
-K9Mesh consists of four independent subsystems.
+K9Mesh is a four-node distributed system. Each node owns a single responsibility and communicates over a dedicated transport:
 
-| Subsystem | Responsibility |
-|-----------|----------------|
-| STM32 Rover Controller | Motion control, odometry and sensor fusion |
-| ESP32 CSI Node | RF sensing and signal processing |
-| STM32 Remote Controller | Manual rover operation through nRF24L01 |
-| Mission Control | Visualization, MQTT communication and survivor mapping |
+| Node | Hardware | Transport | Responsibility |
+|------|----------|-----------|----------------|
+| Teleoperation TX | ESP32 (joystick) | ESP-NOW, 20 Hz | Manual rover control |
+| Rover RX | ESP32 + L298N + FC-03 ×2 + MPU9250 | — | Drive, encoder ISR, IMU, odometry relay |
+| CSI node | ESP32-S3 (MicroPython) | UDP :5005 | CSI capture, gain lock, odometry muxing |
+| Host pipeline + GCS | Laptop (Python + Node) | WebSocket :8080 / HTTP :3001 | DSP, detection, dead reckoning, visualization |
 
-Separating these responsibilities allows each subsystem to operate independently while simplifying future development and maintenance.
+```
+ ┌──────────────────┐  ESP-NOW 2.4 GHz   ┌──────────────────────┐  UART2 115200 8N1  ┌────────────────────────┐
+ │ TX: joystick     │ ─────────────────► │ RX: L298N · FC-03 ×2 │ ─────────────────► │ S3: CSI node           │
+ │ deadman · 20 Hz  │  {x, y, stop}      │ MPU9250 @ 400kHz I²C │  CSV odom ~10 Hz   │ MicroPython · gain lock│
+ └──────────────────┘                    └──────────────────────┘                    │ HT20 CSI · UDP stream  │
+                                                                                     └───────────┬────────────┘
+                                                                                                 │ UDP :5005
+                                                                                                 ▼
+                                               ┌────────────────────────┐   WebSocket :8080   ┌──────────────────────┐
+                                               │ Host pipeline          │ ──────────────────► │ GCS (k9ui) :3001    │
+                                               │ NBVI · MVS · MLP · FFT │                     │ React · Vite ·      │
+                                               │ dead reckoning         │                     │ Leaflet · Tailwind  │
+                                               └────────────────────────┘                     └──────────────────────┘
+```
+
+### Rover subsystem (`rover/`)
+
+- **TX (`transmitter.ino`)** — reads a two-axis analog joystick (ADC1 pins, WiFi-safe) and an active-low deadman button, auto-calibrates the stick center at boot, and broadcasts a 5-byte struct (`int16 x`, `int16 y`, `bool stop`) to a fixed receiver MAC at 20 Hz over unencrypted ESP-NOW.
+- **RX (`receiver.ino`)** — decodes control frames into arcade-mixed left/right PWM commands (5 kHz, 8-bit LEDC) for an L298N H-bridge; counts FC-03 encoder pulses in RISING-edge `IRAM_ATTR` ISRs (direction inferred from commanded speed sign); samples the MPU9250 over I²C at 400 kHz with correct MPU-9250 die-temperature conversion (333.87 LSB/°C, 21 °C offset); and relays packed odometry as ASCII CSV lines (`ticksL,ticksR,ax..gz,tempC,mpu_ok`) over UART2 at 115200 8N1.
+
+Full electrical detail — pinout tables, power rails, operating and absolute-maximum ratings — is in **[DATASHEET.md](DATASHEET.md)** (rev 1.2); the schematic is in `Circuit-Diagram.png`.
+
+### CSI node (`wifi/src/`)
+
+The ESP32-S3 runs a MicroPython CSI streamer (`main.py`):
+
+- Station-mode association at 802.11 b/g/n, **HT20** (64 subcarriers), 2.4 GHz-only, power management disabled, optional **BSSID lock** for stable multipath geometry.
+- **Gain lock**: median AGC/FFT gain over 300 packets is forced via `csi_force_gain()` to stabilize amplitude scale. Modes: `auto` (skip and fall back to coefficient-of-variation normalization when AGC < 30, i.e. signal too strong), `enabled`, `disabled`.
+- **Traffic generation** (ping or DNS mode) ensures a continuous packet stream for CSI sampling.
+- Odometry is polled from UART in the main loop and **muxed into every CSI datagram**, so RF samples and pose data arrive in a single atomic packet.
+
+**Wire format** (host `receiver.py` must match exactly):
+
+| Field | Layout |
+|-------|--------|
+| Header (12 B) | `seq` u32 · `timestamp_us` u32 · `channel` u16 · `rssi` i8 · `csi_len` u8 |
+| Odometry block (27 B) | `ticksL` i32 · `ticksR` i32 · `ax..az, gx..gz` i16 ×6 · `temp_c_x10` i16 · `mpu_ok` u8 |
+| CSI payload (128 B) | 64 subcarriers × (Q, I) int8 pairs, HT20 |
 
 ---
 
-## Capabilities
+## Host-Side Signal Processing (`wifi/host/`)
 
-### RF Sensing
+The host receives the UDP stream and runs the full detection pipeline per packet.
 
-- Human motion detection using Wi-Fi CSI
-- Respiration detection
-- Through-wall RF sensing
-- Adaptive environmental calibration
-- Confidence estimation
+### 1. Acquisition (`receiver.py`)
 
-### Robotics
+Binds the UDP socket (optionally to a single interface via `SO_BINDTODEVICE`), parses the fixed-width struct, decodes subcarrier amplitudes as |H| = √(I² + Q²), tracks sequence numbers for loss accounting, and derives odometry freshness by diffing consecutive samples (the firmware repeats the last odom block because odometry updates at ~10 Hz while CSI arrives faster).
 
-- Differential drive platform
-- STM32 motion controller
-- MPU9250 inertial measurement unit
-- Wheel encoder odometry
-- Dead reckoning
-- PID motor control
+### 2. Calibration (`nbvi.py`, `csi_dsp.py`)
 
-### Communication
+Before detection, a still-room calibration window (default **13 s**, ~50 warm-up packets) runs the **NBVI (Normalized Baseline Variability Index)** calibrator:
 
-- UART communication between STM32 and ESP32
-- nRF24L01 remote control
-- MQTT telemetry
-- Real-time mission monitoring
+1. Buffers baseline CSI frames into an `n × 64` matrix.
+2. Finds candidate quiet windows via percentile-based detection.
+3. Scores all valid subcarriers (guard bands 11–52 and the DC bin 32 excluded, null subcarriers gated) using four selection strategies — *Entropy Spaced*, *MAD Clustered*, *Classic Spaced*, *Classic Clustered*.
+4. Validates each candidate **12-subcarrier band** by running it through the real `MVSDetector` and measuring its false-positive rate on the baseline (P95 × 1.1 adaptive threshold).
 
-### Mission Control
+The winning band is reused by the MVS motion detector, the respiration estimator, and the spectrogram — one calibration, shared by every downstream consumer. If NBVI fails, the fixed `DEFAULT_BAND` (`[12, 14, 16, 18, 20, 24, 28, 36, 40, 44, 48, 52]`) is used as the documented upstream fallback.
 
-- Rover pose visualization
-- Live telemetry
-- Detection logging
-- Survivor probability mapping
-- Search zone prioritization
+### 3. Motion detection (`mvs_detector.py`)
+
+Per-packet pipeline, matching Micro-ESPectre's algorithm definitions:
+
+```
+band amplitudes → spatial turbulence (σ, or CV when not gain-locked)
+              → Hampel filter (MAD-based, window 5, 6.0×)
+              → 1st-order low-pass IIR (11 Hz cutoff @ 100 Hz)
+              → moving variance over a sliding window (75 packets)
+              → adaptive threshold (P95 × factor of baseline MV)
+              → IDLE / MOTION with hysteresis (1 hit on, 5 hits off)
+```
+
+The threshold factor is the primary sensitivity lever: stock is 1.1; setting it to 0.7 places the threshold below typical baseline noise so nearly any deviation registers as motion.
+
+A scalar confidence in [0, 100] is derived from the variance/threshold ratio and published alongside the state.
+
+### 4. ML motion classifier (`ml_detector.py`, `ml_features.py`)
+
+A parallel detector: an sklearn `MLPClassifier` (9 → 32 → 16 → 1, with `StandardScaler`) over **nine turbulence-window features** — mean, std, MAD, IQR, peak-to-peak, mean absolute first difference, skewness, excess kurtosis, zero-crossing rate — computed on the same Hampel/low-pass filtered turbulence stream but on the fixed `DEFAULT_BAND` with raw std (CV normalization is deliberately disabled for ML, per upstream).
+
+Models are not shipped pretrained (feature definitions are a reconstruction; upstream weights are incompatible). Train your own:
+
+```bash
+# 1. Collect labeled runs — one label per run, several runs per class
+sudo python collect_data.py --interface wlp2s0 --label baseline --duration 120 --out data/baseline_01.npz
+sudo python collect_data.py --interface wlp2s0 --label movement --duration 60  --out data/movement_01.npz
+
+# 2. Train
+python train_model.py --data "data/*.npz" --out ../models/model.pkl
+```
+
+The bundle (`model.pkl`) is loaded from `wifi/models/`; if absent, ML detection disables itself gracefully and MVS remains the only motion source.
+
+### 5. Respiration estimation (`respiration.py`)
+
+Breathing manifests as sub-Hz CSI amplitude fluctuations. The estimator consumes the same NBVI-selected band — mean band amplitude per packet — and runs:
+
+```
+band amplitude → streaming Hampel filter (window 7, 5.0 MAD)
+             → 60 s sliding buffer (packet timestamps + filtered values)
+             → unique/sort (relay-jitter guard)
+             → quadratic detrend → linear resample @ 10 Hz
+             → FFT → band-limited peak search in [0.15, 0.5] Hz
+```
+
+The operating band corresponds to **10–30 breaths per minute**. Results are SNR-gated (minimum 3.0) and evaluation is **motion-gated**: the detector only runs while MVS reports `idle`, and only once ≥ 30 s of samples are buffered.
+
+Each evaluation emits a `BreathResult`:
+
+| Field | Meaning |
+|-------|---------|
+| `rate_bpm` | Estimated respiration rate (null if no significant peak) |
+| `snr` | Peak-to-noise-floor ratio |
+| `confidence` | 0–1 trust score for `rate_bpm` |
+| `spectral_purity` | Peak power / total in-band power |
+| `band_power_frac` | In-band power / total spectral power |
+| `harmonic_ratio` | Power at 2× peak frequency / power at peak (harmonic discriminant) |
+
+### 6. Dead reckoning (`dead_reckoning.py`)
+
+Differential-drive odometry from encoder tick deltas, with heading integrated from the MPU9250 **gyro-z** rather than the tick differential (tick-based heading drifts hard under wheel slip on TT gearmotors). Position updates use **midpoint integration** (heading evaluated at the step midpoint), halving first-order error versus naive Euler. Gyro scaling follows the firmware's ±250 dps full scale (131 LSB/(°/s)); a tick-differential heading fallback engages if the IMU reports bad data. Robot geometry is configurable: wheel radius, ticks-per-revolution (`20 × 24` gear ratio × 20-hole disc), and wheelbase (must be measured on the chassis).
+
+### 7. Spectrogram (`spectrogram.py`)
+
+Per packet, the calibrated band's raw amplitudes are min-max normalized and mapped to an HSV colormap (hue 240° → 0°), producing an RGB row per hop boundary. The most recent row is attached to **every** telemetry frame once the buffer has filled, so the UI renders a continuous band-level spectrogram instead of strobing at hop boundaries.
 
 ---
 
-## Design Objectives
+## Ground Control Station (`k9ui/`, `runner.py`)
 
-K9Mesh has been designed around four engineering objectives.
+`runner.py` is an asyncio process orchestrator: it starts the Express bridge, then either the Vite dev server (`--dev`) or a production build (opened in the browser). SIGINT/SIGTERM trigger an idempotent staged shutdown (terminate → 5 s grace → kill).
 
-### Modularity
+`k9ui/server/bridge.js` (port **3001**) provides:
 
-Motion control, RF sensing and mission management operate as independent subsystems with clearly defined interfaces.
+- `POST /api/start` — spawns `wifi/host/main.py` with `--interface`, `--model`, `--port` and optional `--calibration-seconds` / `--skip-calibration`; rejects concurrent runs (409); validates model presence up front.
+- `POST /api/stop` — SIGTERM with SIGKILL escalation after 5 s.
+- `GET /api/status` — `{ running, pid, error, firstPacket }`; `firstPacket` flips when the host reports `FIRST_PACKET_RECEIVED`.
+- Static hosting of the built UI bundle.
 
-### Reproducibility
+`wifi/host/main.py` fans telemetry out over **`ws://127.0.0.1:8080`**; the React client (`TelemetryProvider`) consumes it through rolling-window hooks. The dashboard renders:
 
-The complete hardware and software stack is based on commercially available components and open-source software.
+- **TelemetryPanel** — RSSI, packet loss, MVS state/variance/threshold/confidence, ML score, IMU die temperature, stale-data flags
+- **LiveGraph** — motion variance vs. adaptive threshold, respiration rate, ML score timelines
+- **Spectrogram** — streaming band-level CSI amplitude imagery
+- **RoverMap** — live pose on a Leaflet map
 
-### Extensibility
+A mock telemetry generator supports UI development without hardware.
 
-New sensing algorithms, localization techniques and autonomous navigation modules can be integrated without redesigning the existing architecture.
+### Telemetry schema
 
-### Accessibility
+```json
+{
+  "seq": 1234,
+  "timestamp_us": 1723015324123456,
+  "channel": 6,
+  "rssi": -58,
+  "dropped": 2,
+  "band": [12, 14, 16, 18, 20, 24, 28, 36, 40, 44, 48, 52],
+  "mvs":   { "state": "idle", "variance": 1.2e-4, "threshold": 4.5e-4, "confidence": 27.3 },
+  "ml":    { "ready": true, "score": 0.02, "detection": "idle", "enabled": true },
+  "breath": {
+    "rate_bpm": 15.4, "snr": 6.1, "confidence": 0.81, "peak_freq_hz": 0.26,
+    "spectral_purity": 0.62, "band_power_frac": 0.44, "harmonic_ratio": 0.09, "n_samples": 600
+  },
+  "pose": { "x": 0.42, "y": -0.15, "theta_deg": 92.1 },
+  "temperature_c": 39.2,
+  "stale": false,
+  "csi_spectrogram_row": [[23, 41, 255], [30, 68, 240], "..."]
+}
+```
 
-The platform demonstrates that RF life-sign sensing can be implemented using low-cost embedded hardware, making experimentation accessible to students, researchers and humanitarian organizations.
+`pose` is the dead-reckoned rover frame `(x, y, θ)`; `stale` indicates the odometry block is a repeat (not freshly updated); `temperature_c` is the MPU9250 die temperature (suppressed when the sample is not backed by a valid `mpu_ok` reading).
 
 ---
 
@@ -122,727 +217,152 @@ The platform demonstrates that RF life-sign sensing can be implemented using low
 
 ```
 K9Mesh/
+├── rover/                      # ESP32 teleoperation firmware (Arduino)
+│   ├── transmitter.ino         #   Joystick TX — ESP-NOW control frames
+│   └── receiver.ino            #   Drive, encoder ISRs, IMU, UART odom relay
 │
-├── firmware/
-│   ├── stm32/
-│   ├── esp32/
-│   └── micro-espectre/
+├── wifi/                       # CSI sensing subsystem
+│   ├── firmware/               #   Prebuilt MicroPython CSI firmware (ESP32, ESP32-S3)
+│   ├── setup.py                #   Flash/deploy tooling (esptool + SHA256-verified releases)
+│   ├── main.py                 #   Device entry point
+│   ├── src/                    #   MicroPython CSI streamer
+│   │   ├── main.py             #     WiFi/CSI init, gain lock, UDP streaming, odom mux
+│   │   ├── config.py(.example) #     Credentials, gain-lock mode, traffic gen (config_local.py overrides)
+│   │   ├── traffic_generator.py#     Ping/DNS packet generation
+│   │   └── utils.py            #     HT20 payload normalization, I/Q helpers
+│   ├── host/                   #   Host-side pipeline (Python 3.13)
+│   │   ├── receiver.py         #     UDP ingest, struct parsing, amplitude extraction
+│   │   ├── main.py             #     Calibration, detection loop, WebSocket fan-out
+│   │   ├── csi_dsp.py          #     Hampel, low-pass, turbulence, moving variance, thresholds
+│   │   ├── nbvi.py             #     Multi-strategy subcarrier-band calibration
+│   │   ├── mvs_detector.py     #     Moving-variance segmentation motion detector
+│   │   ├── ml_detector.py      #     MLP motion classifier (inference)
+│   │   ├── ml_features.py      #     9-feature turbulence-window extraction
+│   │   ├── train_model.py      #     MLP training (sklearn)
+│   │   ├── collect_data.py     #     Labeled CSI dataset collection
+│   │   ├── respiration.py      #     FFT-based breathing-rate estimator
+│   │   ├── dead_reckoning.py   #     Differential-drive odometry + gyro heading
+│   │   └── spectrogram.py      #     Band-normalized HSV spectrogram rows
+│   ├── models/model.pkl        #   Trained model bundle (scaler + MLP)
+│   └── requirements.txt
 │
-├── backend/
-├── hardware/
-├── datasets/
-├── experiments/
-├── docs/
+├── k9ui/                       # Ground control station
+│   ├── server/bridge.js        #   Express bridge — REST control, process spawn, static host
+│   └── src/                    #   React 18 + Vite + Tailwind telemetry UI
 │
-├── README.md
-└── LICENSE
-```
-
-The repository is organized to separate firmware, documentation, hardware resources, datasets and experimental results.
-## System Architecture
-
-K9Mesh follows a distributed embedded architecture in which each subsystem is responsible for a single task. Separating motion control, RF sensing and mission management improves real-time performance, simplifies debugging and allows individual components to evolve independently.
-
-```
-                     Mission Control
-      Visualization • MQTT • Heatmaps • Logging
-                        ▲
-                        │ Wi-Fi
-                        │
-                ESP32 CSI Processing Node
-      CSI Acquisition • Motion • Respiration • MQTT
-                        ▲
-                      UART
-                        ▲
-               STM32 Rover Controller
-    IMU • Encoders • Odometry • PID • Motor Control
-                        ▲
-                    nRF24L01
-                        ▲
-             STM32 Remote Controller
+├── runner.py                   # Orchestrator — bridge + build/dev, signal-safe shutdown
+├── DATASHEET.md                # Hardware datasheet (pinout, power, ratings) rev 1.2
+├── Circuit-Diagram.png
+└── README.md
 ```
 
 ---
 
-### STM32 Rover Controller
+## Build & Run
 
-The STM32 is responsible for every real-time operation performed by the rover. It controls the drive system, estimates the rover pose and continuously transfers navigation data to the ESP32.
+### Prerequisites
 
-Responsibilities include:
+- **Rover firmware**: Arduino IDE or CLI with the ESP32 Arduino core ≥ 3.0 (LEDC API), flash `rover/transmitter.ino` and `rover/receiver.ino`; set the receiver MAC in the transmitter.
+- **CSI node**: flash `wifi/firmware/ESP32_CSI_S3.bin` via `wifi/setup.py` (SHA256-verified against the upstream Micro-ESPectre release) or deploy `wifi/src/` with `mpremote`. Configure credentials in `wifi/src/config_local.py` (copy from `config_local.py.example`): SSID, password, host IP, optional BSSID lock, gain-lock mode, traffic-generator rate.
+- **Host + GCS**: Python 3.13 with `pip install -r wifi/requirements.txt`; Node.js ≥ 18 with `npm install` inside `k9ui/`.
 
-- Differential drive control
-- PID motor speed regulation
-- Wheel encoder processing
-- MPU9250 sensor fusion
-- Dead reckoning
-- Rover pose estimation
-- UART communication with the ESP32
+### Running the full stack
 
-Keeping motion control independent from RF sensing ensures deterministic execution regardless of Wi-Fi traffic or MQTT activity.
+```bash
+# Production: builds the UI, starts bridge on :3001, opens browser
+python runner.py
 
----
-
-### ESP32 CSI Processing Node
-
-The ESP32 performs all RF sensing operations.
-
-It captures Wi-Fi Channel State Information packets, executes the modified Micro-ESPectre processing pipeline and publishes processed data through MQTT.
-
-Responsibilities include:
-
-- CSI acquisition
-- Gain calibration
-- Adaptive subcarrier selection
-- Motion detection
-- Respiration detection
-- MQTT communication
-- Pose synchronization
-
-The ESP32 never performs motor control, allowing RF processing to operate without affecting rover stability.
-
----
-
-### STM32 Remote Controller
-
-A dedicated STM32-based controller communicates with the rover using an nRF24L01 radio module.
-
-This communication channel is completely independent of Wi-Fi and provides reliable low-latency manual control.
-
-Responsibilities include:
-
-- Steering control
-- Speed control
-- Emergency stop
-- Wireless command transmission
-
----
-
-### Mission Control
-
-Mission Control receives telemetry from the rover through MQTT.
-
-Instead of displaying raw CSI measurements, it converts processed detections into information useful during search and rescue operations.
-
-Mission Control provides:
-
-- Live rover telemetry
-- Rover trajectory
-- Motion detection status
-- Respiration detection status
-- Detection confidence
-- Survivor probability maps
-- Search coverage visualization
-- Experimental data logging
-
----
-
-## Communication Architecture
-
-K9Mesh uses three independent communication channels.
-
-| Interface | Purpose |
-|-----------|----------|
-| nRF24L01 | Remote rover control |
-| UART | STM32 ↔ ESP32 communication |
-| MQTT | Rover ↔ Mission Control |
-
-Each interface has a dedicated purpose, reducing system complexity while improving reliability.
-
----
-
-## System Workflow
-
-The complete operating sequence is shown below.
-
-```
-Power On
-    │
-    ▼
-Initialize Hardware
-    │
-    ▼
-CSI Calibration
-    │
-    ▼
-Start Mission
-    │
-    ▼
-Drive Rover
-    │
-    ▼
-Estimate Rover Pose
-    │
-    ▼
-Acquire CSI Packets
-    │
-    ▼
-Detect Motion
-    │
- ┌──┴──┐
- │     │
- │No   │Yes
- │     ▼
- │ Stop Rover
- │     │
- │     ▼
- │Detect Respiration
- │     │
- └────►▼
-Publish MQTT
-    │
-    ▼
-Mission Control
-    │
-    ▼
-Update Survivor Map
+# Development: bridge on :3001 + Vite dev server with HMR
+python runner.py --dev
 ```
 
-Every subsystem contributes to the workflow without interrupting any other subsystem.
+Start acquisition from the UI (enter your monitor interface, choose calibration mode), or manually:
 
----
-
-# CSI Processing
-
-K9Mesh extends the Micro-ESPectre CSI engine while preserving its original statistical motion detection pipeline.
-
-Incoming Wi-Fi packets undergo calibration before feature extraction and classification.
-
-```
-Raw CSI
-    │
-    ▼
-Gain Lock
-    │
-    ▼
-Adaptive Subcarrier Selection
-    │
-    ▼
-Spatial Turbulence Estimation
-    │
-    ▼
-Optional Filtering
-    │
-    ▼
-Moving Variance
-    │
-    ▼
-Adaptive Threshold
-    │
-    ▼
-Human Motion Detection
+```bash
+cd wifi/host
+sudo python main.py --interface wlp2s0            # NBVI calibration (13 s), then live detection
+sudo python main.py --interface wlp2s0 --skip-calibration   # DEFAULT_BAND, MVS variance-only
 ```
 
-The calibration stage automatically determines stable subcarriers and estimates the environmental baseline. This allows the detector to adapt to different operating environments without manual tuning.
+`sudo` is only required for `SO_BINDTODEVICE` interface binding; without root the receiver falls back to all interfaces. The host listens for CSI on UDP :5005 and broadcasts telemetry on WebSocket :8080.
 
-Detailed mathematical descriptions of the processing stages are available in **micro-espectre/ALGORITHMS.md**.
+### Operating notes
 
----
-
-# CSSR Extension
-
-The original Micro-ESPectre engine detects environmental motion.
-
-K9Mesh extends the architecture by introducing independent processing modules while preserving compatibility with the existing motion detector.
-
-```
-                 CSI Stream
-                      │
-              Existing Preprocessing
-                      │
-         ┌────────────┴─────────────┐
-         │                          │
-         ▼                          ▼
- Human Motion Detection     Respiration Detection
-         │                          │
-         └────────────┬─────────────┘
-                      ▼
-              MQTT Data Publisher
-```
-
-The motion detector remains unchanged.
-
-The respiration detector operates as a parallel processing module and consumes the same calibrated CSI stream.
-
-This architecture allows future physiological or localization algorithms to be integrated without modifying the existing detection pipeline.
+- Calibration requires a **still room**: the NBVI baseline and the MVS adaptive threshold are both derived from it, and respiration reuses the selected band.
+- `--skip-calibration` disables the motion flag entirely (variance is reported but no threshold exists) — useful for signal inspection.
+- Respiration estimates are only meaningful while the rover is stationary and MVS is `idle`; platform-induced motion dominates the sub-Hz band otherwise.
 
 ---
 
-# Respiration Detection
+## Hardware
 
-Detecting stationary survivors requires analysing much smaller signal variations than those produced by body movement.
+| Component | Role |
+|-----------|------|
+| ESP32 (TX) | Joystick transmitter, ESP-NOW |
+| ESP32 (RX) | Motor control, encoder ISR, IMU master |
+| ESP32-S3 | Odometry sink + CSI acquisition (MicroPython) |
+| L298N | Dual H-bridge motor driver (2S Li-ion, 7.4 V nominal) |
+| FC-03 ×2 | Wheel-speed encoders (interrupt-driven, 3.3 V) |
+| MPU9250 | 9-DoF IMU, 400 kHz I²C |
+| Laptop | Host DSP pipeline + ground control station |
 
-K9Mesh introduces a dedicated respiration detection pipeline that estimates breathing rate from low-frequency CSI fluctuations.
-
-```
-CSI
- │
- ▼
-Stable Subcarriers
- │
- ▼
-Weighted Average
- │
- ▼
-Downsampling
- │
- ▼
-Sliding Ring Buffer
- │
- ▼
-Band-pass Filter
-0.1–0.5 Hz
- │
- ▼
-Fast Fourier Transform
- │
- ▼
-Peak Detection
- │
- ▼
-Respiration Rate
-```
-
-The detector estimates respiration between **6 and 30 breaths per minute**.
-
-To minimise platform-induced interference, respiration analysis is intended to operate while the rover is stationary.
-
-Each detection includes:
-
-- Respiration rate
-- Detection confidence
-- Packet quality
-- Signal quality
-
-The respiration detector operates independently of the motion detector and does not modify the original Micro-ESPectre processing pipeline.
-# Rover Pose Estimation
-
-Human detection alone is insufficient during search and rescue operations. Rescue teams require spatial information to determine where a potential survivor is located and which areas have already been inspected.
-
-K9Mesh addresses this by associating every RF observation with the rover's estimated position.
-
-The STM32 continuously estimates the rover pose using wheel encoder odometry combined with heading information from the MPU9250 gyroscope. The estimated position is transmitted to the ESP32 through UART, where it is embedded into every MQTT message generated by the CSI processing pipeline.
-
-```
-Wheel Encoders
-        │
-        ▼
-Distance Estimation
-        │
-        ▼
-MPU9250 Gyroscope
-        │
-        ▼
-Heading Estimation
-        │
-        ▼
-Dead Reckoning
-        │
-        ▼
-(X, Y, Heading)
-        │
-        ▼
-ESP32
-        │
-        ▼
-MQTT
-```
-
-This allows RF detections to be visualized in their physical context rather than as isolated sensor measurements.
+See **[DATASHEET.md](DATASHEET.md)** for complete pinouts, power-tree analysis, recommended operating conditions, absolute-maximum ratings, and design errata (ADC1-vs-ADC2 WiFi constraints, 3.3 V rail loading, ESP-NOW security notes).
 
 ---
 
-# Survivor Probability Mapping
+## Implementation Status
 
-Instead of producing binary motion events, K9Mesh continuously builds a probabilistic representation of the search area.
-
-Every RF observation contributes to the confidence associated with a specific region of the environment.
-
-```
-CSI Observation
-        │
-        ▼
-Motion Score
-        │
-        ▼
-Respiration Status
-        │
-        ▼
-Detection Confidence
-        │
-        ▼
-Rover Position
-        │
-        ▼
-Probability Grid
-        │
-        ▼
-Survivor Map
-```
-
-Areas with repeated high-confidence detections gradually become high-priority search zones, while unexplored regions remain marked for additional inspection.
-
-This approach allows rescue teams to allocate resources based on evidence rather than individual sensor events.
+- [x] Teleoperation (ESP-NOW, arcade mix, deadman)
+- [x] Encoder/IMU odometry relay (UART)
+- [x] CSI acquisition + AGC/FFT gain lock (HT20)
+- [x] NBVI subcarrier-band calibration
+- [x] MVS motion detection (adaptive threshold, hysteresis)
+- [x] MLP motion classifier (train + infer)
+- [x] Respiration estimation (FFT, SNR-gated, motion-gated)
+- [x] Dead reckoning (midpoint integration, gyro heading)
+- [x] CSI spectrogram
+- [x] GCS bridge + live dashboard
 
 ---
 
-# Mission Control
+## Contributing
 
-Mission Control acts as the operational interface for K9Mesh.
-
-It receives telemetry through MQTT and converts embedded sensor data into information that can be interpreted quickly by rescue personnel.
-
-Mission Control provides:
-
-- Live rover telemetry
-- Rover trajectory visualization
-- Human motion status
-- Respiration status
-- Detection confidence
-- Survivor probability maps
-- Search coverage visualization
-- Mission recording
-
-The objective is to present actionable information rather than raw RF measurements.
+Contributions are welcome across embedded systems, RF sensing, signal processing, and frontend engineering. Bug reports, feature requests and pull requests are encouraged.
 
 ---
 
-# MQTT Message Structure
+## Acknowledgements
 
-Every processed observation is published as a structured JSON message.
-
-```json
-{
-    "timestamp": 1723015324,
-    "state": "motion",
-    "movement": 0.81,
-    "breathing": true,
-    "breathing_bpm": 15.4,
-    "confidence": 0.93,
-    "signal_quality": 0.89,
-    "pps": 965,
-    "rover_x": 2.37,
-    "rover_y": 4.91,
-    "rover_heading": 92.1
-}
-```
-
-The message format has been designed to support future sensing modules without requiring changes to the communication protocol.
+- **Micro-ESPectre** — the CSI engine and algorithm definitions this project extends (`csi_dsp.py`, `nbvi.py` are ports of the upstream ESP32-S3 firmware implementations; NBVI is © Francesco Pace, GPLv3)
+- **Espressif Systems** — ESP-IDF/Arduino core, ESP-NOW, CSI APIs
+- **Random Nerd Tutorials** — ESP-NOW reference patterns used in the rover firmware
 
 ---
 
-# Signal to Survivor
-
-The purpose of K9Mesh is not simply to detect RF disturbances.
-
-The objective is to transform wireless measurements into meaningful information for search and rescue operations.
-
-```
-Wi-Fi Packet
-      │
-      ▼
-Channel State Information
-      │
-      ▼
-Signal Processing
-      │
-      ▼
-Human Motion Detection
-      │
-      ▼
-Respiration Detection
-      │
-      ▼
-Pose Synchronization
-      │
-      ▼
-MQTT Telemetry
-      │
-      ▼
-Mission Control
-      │
-      ▼
-Survivor Probability Map
-      │
-      ▼
-Prioritized Search Zones
-```
-
-Every subsystem contributes to this processing chain. The final output is not a single detection event but a continuously updated representation of the environment that supports decision making during rescue operations.
-
----
-
-# Novel Contributions
-
-K9Mesh combines embedded robotics, RF sensing and localization into a unified open-source platform for collapsed structure search and rescue.
-
-The project introduces several architectural contributions.
-
-### Distributed Embedded Architecture
-
-Motion control, RF sensing and mission management operate on independent hardware platforms connected through dedicated communication channels.
-
-### Mobile Wi-Fi CSI Sensing
-
-CSI acquisition is integrated with a mobile robotic platform capable of exploring unknown environments while continuously collecting RF observations.
-
-### Parallel Respiration Detection
-
-A dedicated respiration detection pipeline extends the Micro-ESPectre engine without modifying the existing motion detection algorithm.
-
-### Pose-Tagged RF Observations
-
-Every CSI measurement is synchronized with the rover position, allowing detections to be visualized spatially.
-
-### Survivor Probability Mapping
-
-Multiple observations are fused into a continuously updated probability map that highlights high-confidence search zones.
-
-### Open Research Platform
-
-The complete hardware and software stack is designed for reproducible research using commercially available components.
-
----
-
-# Experimental Validation
-
-K9Mesh will be evaluated using representative search and rescue scenarios.
-
-The evaluation focuses on sensing performance, localization accuracy and system reliability.
-
-| Metric | Description |
-|----------|-------------|
-| Motion Detection Accuracy | Correct classification of human movement |
-| Respiration Detection Accuracy | Estimated breathing rate compared with ground truth |
-| False Positive Rate | Incorrect detections in an empty environment |
-| Localization Error | Difference between estimated and measured rover position |
-| Through-Wall Performance | Detection across different construction materials |
-| Processing Latency | Time from CSI acquisition to visualization |
-| Packet Processing Rate | CSI packets processed per second |
-| Coverage Efficiency | Percentage of environment successfully scanned |
-
-Experimental datasets and performance results will be published with future releases of the repository.
-
----
-# Future Development
-
-K9Mesh has been designed as a modular research platform. The current implementation establishes the core sensing pipeline, while the architecture allows additional sensing modalities and autonomous capabilities to be integrated without redesigning the system.
-
-Future development will focus on improving localization accuracy, detection reliability and autonomous exploration.
-
-### RF Sensing
-
-- Multi-node Wi-Fi CSI sensing
-- Adaptive clutter suppression
-- Dynamic environmental calibration
-- Confidence-aware detection models
-- Extended RF propagation analysis
-
-### Robotics
-
-- Autonomous waypoint navigation
-- Simultaneous Localization and Mapping (SLAM)
-- Obstacle avoidance
-- Autonomous search planning
-- Multi-rover coordination
-
-### Signal Processing
-
-- Deep learning assisted CSI feature extraction
-- Bayesian confidence estimation
-- Adaptive respiration tracking
-- Continuous environmental learning
-- Automatic parameter optimization
-
-### Mission Control
-
-- Three-dimensional survivor probability mapping
-- Mission replay and analysis
-- Cloud-based telemetry
-- Multi-rover visualization
-- GIS integration for disaster response
-
----
-
-# Hardware
-
-| Component | Description |
-|----------|-------------|
-| ESP32 | Wi-Fi CSI acquisition and signal processing |
-| STM32 | Rover motion controller |
-| STM32 | Remote controller |
-| MPU9250 | Inertial Measurement Unit |
-| L298D | Motor driver |
-| TT Gear Motors | Differential drive platform |
-| Wheel Encoders | Odometry |
-| nRF24L01 | Remote communication |
-| Laptop | Mission Control |
-| Mosquitto | MQTT broker |
-
----
-
-# Software Stack
-
-### Embedded
-
-- STM32 HAL
-- ESP-IDF
-- FreeRTOS
-
-### Signal Processing
-
-- Wi-Fi Channel State Information
-- Fast Fourier Transform
-- Statistical Signal Processing
-- Adaptive Thresholding
-- Digital Filtering
-
-### Communication
-
-- UART
-- SPI
-- MQTT
-- nRF24L01
-
-### Backend
-
-- Python
-- NumPy
-- Matplotlib
-- MQTT
-- JSON
-
----
-
-# Repository Structure
-
-```
-K9Mesh/
-│
-├── firmware/
-│   ├── stm32/
-│   ├── esp32/
-│   └── micro-espectre/
-│
-├── backend/
-│
-├── hardware/
-│
-├── datasets/
-│
-├── experiments/
-│
-├── docs/
-│
-├── images/
-│
-├── README.md
-│
-└── LICENSE
-```
-
----
-
-# Build Status
-
-| Module | Status |
-|----------|---------|
-| Rover Platform | ✅ |
-| STM32 Motion Control | ✅ |
-| Wireless Controller | ✅ |
-| CSI Acquisition | ✅ |
-| Motion Detection | ✅ |
-| MQTT Communication | ✅ |
-| Rover Pose Estimation | 🚧 |
-| Respiration Detection | 🚧 |
-| Survivor Probability Mapping | 🚧 |
-| Mission Control Dashboard | 🚧 |
-| Autonomous Navigation | 📋 |
-| Multi-Node CSI | 📋 |
-
----
-
-# Contributing
-
-Contributions are welcome from researchers, students and developers interested in:
-
-- Embedded Systems
-- Robotics
-- RF Engineering
-- Wireless Communication
-- Signal Processing
-- Disaster Response Technology
-- Humanitarian Engineering
-
-Bug reports, feature requests and pull requests are encouraged.
-
----
-
-# Why Open Source?
-
-Search and rescue technology should be reproducible, accessible and continuously improved through collaboration.
-
-K9Mesh is released as an open-source platform to encourage experimentation in RF sensing, embedded robotics and disaster response technologies.
-
-By combining affordable hardware with open software, the project aims to lower the barrier for researchers, students and humanitarian organizations interested in life-sign detection.
-
-The long-term objective is to establish a reproducible platform that supports research, education and real-world deployment.
-
----
-
-# Acknowledgements
-
-K9Mesh builds upon the work of several open-source communities and research projects.
-
-Special thanks to:
-
-- Micro-ESPectre
-- Espressif Systems
-- STM32 Community
-- Open-source Robotics Community
-- Embedded Systems Research Community
-
-Their work has provided the foundation upon which K9Mesh has been developed.
-
----
-
-# Citation
+## Citation
 
 If K9Mesh contributes to your research, please cite the repository.
 
 ```bibtex
 @misc{k9mesh,
-    title={K9Mesh: An Open-Source RF Life-Sign Detection Platform for Collapsed Structure Search and Rescue},
-    author={Your Team Name},
+    title={K9Mesh: An RF Life-Sign Sensing Platform for Collapsed Structure Search and Rescue},
+    author={K9Mesh Contributors},
     year={2026},
     publisher={GitHub},
-    url={https://github.com/your-repository}
+    url={https://github.com/M3rcuryLake/k9Mesh}
 }
 ```
 
 ---
 
-# Project Vision
+## References
 
-K9Mesh explores the use of Wi-Fi Channel State Information as a practical sensing modality for humanitarian search and rescue.
+[1] *SA-WiSense: A Blind-Spot-Free Respiration Sensing Framework for Single-Antenna Wi-Fi Devices.*
 
-Rather than replacing existing rescue technologies, the platform complements conventional methods by providing an additional source of environmental awareness in situations where visibility is limited.
+[2] *TwSense: Highly Robust Through-the-Wall Human Detection Method Based on COTS Wi-Fi Device.*
 
-The project demonstrates how commodity embedded hardware, open-source software and modern signal processing techniques can be combined to develop affordable research platforms for disaster response.
+[3] *VitalCSI: Contactless Respiratory Rate Estimation Using Consumer-Grade Wi-Fi Channel State Information.*
 
-As the project evolves, K9Mesh aims to become a reproducible reference platform for RF-based life-sign detection, embedded robotics and intelligent search assistance.
+[4] *RaliSense: Extending WiFi Respiratory Detection Range by Rapid Alignment of Dynamic Components.*
 
 ---
-
-<div align="center">
-
-## K9Mesh
-
-### Open-Source RF Life-Sign Detection Platform
-
-**Designed for research. Built for humanitarian applications.**
-
-*"When visibility ends, radio continues."*
-
-⭐ If you find this project useful, consider giving it a star.
-
-</div>

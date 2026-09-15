@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Document rev.** | 1.2 |
+| **Document rev.** | 1.0 |
 | **Boards covered** | ESP32 (TX, joystick transmitter) · ESP32 (RX, motor/sensor receiver) · ESP32-S3 (odometry sink) |
 | **Link** | ESP-NOW, 2.4GHz, unencrypted, channel 0 |
 | **Status** | All power sources confirmed. TX is USB-tethered as an interim setup — see Section 7 |
