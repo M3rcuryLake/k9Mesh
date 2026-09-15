@@ -1,7 +1,7 @@
-# K9Mesh
-
 <div align="center">
-
+ 
+# K9Mesh
+ 
 ### Distributed Wi-Fi CSI Sensing Platform for Life-Sign Detection in Collapsed Structures
 
 **Wi-Fi Channel State Information • Embedded Telemetry • Real-Time Signal Processing**
@@ -12,7 +12,6 @@
 
 </div>
 
----
 
 ## About
 
@@ -24,7 +23,6 @@ Beyond motion, K9Mesh adds a dedicated respiration estimator that recovers breat
 
 Everything runs on off-the-shelf parts — three ESP32-class boards, an L298N drive stage, FC-03 wheel encoders, and an MPU9250 IMU — with a React-based ground control station for live telemetry.
 
----
 
 ## System Overview
 
@@ -164,7 +162,6 @@ Differential-drive odometry from encoder tick deltas, with heading integrated fr
 
 Per packet, the calibrated band's raw amplitudes are min-max normalized and mapped to an HSV colormap (hue 240° → 0°), producing an RGB row per hop boundary. The most recent row is attached to **every** telemetry frame once the buffer has filled, so the UI renders a continuous band-level spectrogram instead of strobing at hop boundaries.
 
----
 
 ## Ground Control Station (`k9ui/`, `runner.py`)
 
@@ -211,7 +208,6 @@ A mock telemetry generator supports UI development without hardware.
 
 `pose` is the dead-reckoned rover frame `(x, y, θ)`; `stale` indicates the odometry block is a repeat (not freshly updated); `temperature_c` is the MPU9250 die temperature (suppressed when the sample is not backed by a valid `mpu_ok` reading).
 
----
 
 ## Repository Layout
 
@@ -292,7 +288,6 @@ sudo python main.py --interface wlp2s0 --skip-calibration   # DEFAULT_BAND, MVS 
 - `--skip-calibration` disables the motion flag entirely (variance is reported but no threshold exists) — useful for signal inspection.
 - Respiration estimates are only meaningful while the rover is stationary and MVS is `idle`; platform-induced motion dominates the sub-Hz band otherwise.
 
----
 
 ## Hardware
 
@@ -308,10 +303,8 @@ sudo python main.py --interface wlp2s0 --skip-calibration   # DEFAULT_BAND, MVS 
 
 See **[DATASHEET.md](DATASHEET.md)** for complete pinouts, power-tree analysis, recommended operating conditions, absolute-maximum ratings, and design errata (ADC1-vs-ADC2 WiFi constraints, 3.3 V rail loading, ESP-NOW security notes).
 
----
 
 ## Implementation Status
-
 - [x] Teleoperation (ESP-NOW, arcade mix, deadman)
 - [x] Encoder/IMU odometry relay (UART)
 - [x] CSI acquisition + AGC/FFT gain lock (HT20)
@@ -323,46 +316,21 @@ See **[DATASHEET.md](DATASHEET.md)** for complete pinouts, power-tree analysis, 
 - [x] CSI spectrogram
 - [x] GCS bridge + live dashboard
 
----
 
 ## Contributing
-
 Contributions are welcome across embedded systems, RF sensing, signal processing, and frontend engineering. Bug reports, feature requests and pull requests are encouraged.
 
----
+
 
 ## Acknowledgements
-
 - **Micro-ESPectre** — the CSI engine and algorithm definitions this project extends (`csi_dsp.py`, `nbvi.py` are ports of the upstream ESP32-S3 firmware implementations; NBVI is © Francesco Pace, GPLv3)
 - **Espressif Systems** — ESP-IDF/Arduino core, ESP-NOW, CSI APIs
 - **Random Nerd Tutorials** — ESP-NOW reference patterns used in the rover firmware
 
----
-
-## Citation
-
-If K9Mesh contributes to your research, please cite the repository.
-
-```bibtex
-@misc{k9mesh,
-    title={K9Mesh: An RF Life-Sign Sensing Platform for Collapsed Structure Search and Rescue},
-    author={K9Mesh Contributors},
-    year={2026},
-    publisher={GitHub},
-    url={https://github.com/M3rcuryLake/k9Mesh}
-}
-```
-
----
 
 ## References
-
 [1] *SA-WiSense: A Blind-Spot-Free Respiration Sensing Framework for Single-Antenna Wi-Fi Devices.*
-
 [2] *TwSense: Highly Robust Through-the-Wall Human Detection Method Based on COTS Wi-Fi Device.*
-
 [3] *VitalCSI: Contactless Respiratory Rate Estimation Using Consumer-Grade Wi-Fi Channel State Information.*
-
 [4] *RaliSense: Extending WiFi Respiratory Detection Range by Rapid Alignment of Dynamic Components.*
 
----
