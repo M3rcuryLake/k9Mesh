@@ -17,6 +17,7 @@ interface GraphProps {
   max?: number;
   alarm?: boolean;
   awaiting?: boolean;
+  statusBadge?: { text: string; color: string } | null;
 }
 
 function LiveGraph({
@@ -32,6 +33,7 @@ function LiveGraph({
   max = 100,
   alarm = false,
   awaiting = false,
+  statusBadge = null,
 }: GraphProps) {
   const activeColor = alarm ? '#fb7185' : color;
   const activeFill = alarm ? 'rgba(248, 113, 113, 0.12)' : fillColor;
@@ -194,6 +196,18 @@ function LiveGraph({
                 ALERT
               </span>
             )}
+            {statusBadge && (
+              <span
+                className="rounded-full border px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-widest"
+                style={{
+                  borderColor: statusBadge.color + '80',
+                  backgroundColor: statusBadge.color + '1a',
+                  color: statusBadge.color,
+                }}
+              >
+                {statusBadge.text}
+              </span>
+            )}
           </div>
           {secondaryValue && (
             <div className="mt-1 font-mono text-[10px] text-slate-500">
@@ -264,6 +278,19 @@ export function BreathingGraph() {
   const breathConfidence = telemetry?.breath?.confidence ?? null;
   const breathRate = telemetry?.breath?.rate_bpm ?? null;
   const breathSnr = telemetry?.breath?.snr ?? null;
+  const breathStatus = telemetry?.breath?.status ?? null;
+
+  const statusColor = (() => {
+    switch (breathStatus) {
+      case 'breathing_detected': return '#22c55e';      // green
+      case 'no_breathing_detected': return '#f59e0b';   // amber
+      case 'insufficient_signal':
+      case 'insufficient_data':
+      case 'dropout_rejected': return '#9ca3af';        // grey
+      case 'motion_rejected': return '#3b82f6';         // blue
+      default: return '#6b7280';
+    }
+  })();
 
   return (
     <LiveGraph
@@ -280,6 +307,7 @@ export function BreathingGraph() {
         label: 'Rate',
         value: `${breathRate !== null ? breathRate.toFixed(1) : '—'} BPM · SNR ${breathSnr !== null ? breathSnr.toFixed(1) : '—'}`,
       }}
+      statusBadge={breathStatus ? { text: breathStatus.replace(/_/g, ' '), color: statusColor } : null}
     />
   );
 }

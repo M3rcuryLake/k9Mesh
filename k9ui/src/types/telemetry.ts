@@ -17,9 +17,41 @@ export interface MlData {
 }
 
 export interface BreathData {
-  rate_bpm: number;
-  snr: number;
-  confidence: number;
+  // Legacy fields (backward compatible)
+  rate_bpm: number | null;
+  snr: number | null;
+  confidence: number;  // 0-100
+
+  // Additive diagnostic fields (all nullable for back-compat)
+  status?: string;                     // "breathing_detected" | "no_breathing_detected" | "insufficient_signal" | "insufficient_data" | "motion_rejected" | "dropout_rejected"
+  rejection_reason?: string | null;
+  usable_window_s?: number | null;
+  observed_cycles?: number | null;
+  fft_estimate_brpm?: number | null;
+  bssf_estimate_brpm?: number | null;
+  estimator_agreement?: number | null;
+  n_candidates?: number | null;
+  n_passing?: number | null;
+  pass_fraction?: number | null;
+  estimate_spread_brpm?: number | null;
+  fusion_method?: string | null;
+  regime_flag?: string | null;
+  temporal?: {
+    state: string;
+    variance: number;
+    n_accepted: number;
+  } | null;
+  quality?: {
+    n_passing: number;
+    n_total: number;
+    pass_fraction: number;
+  } | null;
+  confidence_components?: {
+    pass_fraction: number;
+    spread: number;
+    cycles: number;
+    regime: number;
+  } | null;
 }
 
 export interface PoseData {

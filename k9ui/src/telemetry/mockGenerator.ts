@@ -226,6 +226,22 @@ export function generateTelemetry(): Telemetry {
       rate_bpm: parseFloat(breathBpm.toFixed(1)),
       snr: parseFloat(breathSnr.toFixed(1)),
       confidence: parseFloat(breathConfidence.toFixed(1)),
+      status: phase === 'breathing' ? 'breathing_detected' : phase === 'detected' ? 'no_breathing_detected' : 'insufficient_signal',
+      rejection_reason: null,
+      usable_window_s: 20.0,
+      observed_cycles: 5.0,
+      fft_estimate_brpm: parseFloat(breathBpm.toFixed(1)),
+      bssf_estimate_brpm: parseFloat((breathBpm + 0.2).toFixed(1)),
+      estimator_agreement: 0.2,
+      n_candidates: 32,
+      n_passing: 12,
+      pass_fraction: 0.375,
+      estimate_spread_brpm: 1.2,
+      fusion_method: 'mean_baseline',
+      regime_flag: 'normal',
+      temporal: { state: 'tracking', variance: 0.4, n_accepted: 5 },
+      quality: { n_passing: 12, n_total: 32, pass_fraction: 0.375 },
+      confidence_components: { pass_fraction: 0.375, spread: 0.8, cycles: 1.0, regime: 1.0 },
     },
     pose: {
       x: parseFloat(poseX.toFixed(2)),
@@ -244,7 +260,7 @@ export function createHistoryTracker() {
 
   function update(t: Telemetry): TelemetryHistory {
     const mvs = t.mvs ?? { state: 'idle' as const, variance: 0, threshold: 5.22, confidence: 0 };
-    const breath = t.breath ?? { rate_bpm: 0, snr: 0, confidence: 0 };
+    const breath = t.breath ?? { rate_bpm: 0, snr: 0, confidence: 0, status: 'insufficient_signal' };
     const ml = t.ml ?? { ready: true, score: null, detection: null, enabled: true };
     const now = Date.now();
 

@@ -4,6 +4,8 @@ import math
 import socket
 import struct
 
+from breath.csi_complex import build_complex_csi, IQ_ORDER, ComplexCSI
+
 
 # seq(u32), timestamp_us(u32), channel(u16), rssi(i8 SIGNED), payload_len(u8)
 # Must match the ESP32 firmware's HEADER_FMT exactly.
@@ -76,6 +78,23 @@ class CSIPacket:
     csi_raw: bytes
     amplitudes: list = field(default_factory=list)
     odom: OdomSample | None = None
+    # --- respiration-pipeline additions (parsed on demand, lazy) ---
+    # remap_tag records the firmware's CSI length normalization case
+    # (None | 'double_ht20' | 'double_ht57_and_remap' | 'ht57_to_64').
+    remap_tag: str | None = None
+    _complex_csi: ComplexCSI | None = field(default=None, repr=False, compare=False)
+
+    def complex_csi(self) -> ComplexCSI:
+        """Complex CSI (amplitude AND phase) parsed from csi_raw.
+
+        Lazy + cached: the MVS/ML path never pays for this.
+        IQ order is uncalibrated by default -- see breath/csi_complex.py.
+        """
+        if self._complex_csi is None:
+            self._complex_csi = build_complex_csi(
+                self.csi_raw, self.remap_tag, iq_order=IQ_ORDER
+            )
+        return self._complex_csi
 
 
 class CSIReceiver:
@@ -133,6 +152,11 @@ class CSIReceiver:
 
         amplitudes = extract_amplitudes(csi_raw)
 
+        # The firmware normalizes CSI payloads to EXPECTED_CSI_LEN before
+        # sending (wifi/src/utils.normalize_ht20_csi_payload), so the host
+        # sees 128 bytes and cannot distinguish the remap cases from here.
+        # remap_tag stays None; zeroed padding bins are excluded downstream
+        # by breath.csi_complex.valid_subcarrier_mask's zero check.
         packet = CSIPacket(seq, ts, channel, rssi, length, csi_raw, amplitudes, odom)
 
         try:

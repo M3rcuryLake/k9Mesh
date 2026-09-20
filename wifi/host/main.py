@@ -15,15 +15,11 @@ from csi_dsp import DEFAULT_BAND, HampelFilter
 from mvs_detector import MVSDetector, MOTION
 from ml_detector import MLDetector
 from dead_reckoning import DeadReckoner
-from respiration import (
-    BREATH_WINDOW_SEC,
-    BREATH_TICK_SEC,
-    BREATH_RESAMPLE_HZ,
-    band_amplitude,
-    detect_breath,
-)
+from breath.result import RespirationResult  # new result class for type hint
 from spectrogram import SpectrogramProcessor
 import nbvi
+from breath.pipeline import RespirationPipeline
+from breath.pipeline_config import PipelineConfig
 
 WHEEL_RADIUS_M = 0.03      # 3cm wheels
 TICKS_PER_REV = 20 * 24
@@ -189,15 +185,15 @@ def run_sync_detection(args, rx, telemetry_queue, loop):
         gyro_fsr_dps=GYRO_FSR_DPS,
     )
 
-    breath_hampel = HampelFilter()
-    breath_ts = deque()
-    breath_vals = deque()
+    # New respiration pipeline
+    breath_cfg = PipelineConfig()
+    breath_pipe = RespirationPipeline(breath_cfg)
+    last_breath_result: RespirationResult | None = None
     last_breath_eval = 0.0
-    last_breath_result = None
 
     # Spectrogram state
     spectrogram_processor = SpectrogramProcessor()
-    last_spectrogram_row = None          # <-- NEW: cache, so every message can carry a row
+    last_spectrogram_row = None
 
     print(f"\n{'-'*60}")
     print("Live detection - Ctrl+C to stop")
@@ -223,7 +219,6 @@ def run_sync_detection(args, rx, telemetry_queue, loop):
             if spectrogram_processor is not None:
                 spectrogram_row = spectrogram_processor.push(packet.amplitudes, band)
 
-
             mvs_state, mvs_variance = mvs.process(packet.amplitudes)
             ml_result = ml.process(packet.amplitudes)
             mvs_confidence = variance_to_confidence(mvs_variance, mvs.threshold)
@@ -232,28 +227,20 @@ def run_sync_detection(args, rx, telemetry_queue, loop):
                 dr.update(packet.odom)
             pose = dr.pose
 
+            # Feed packet to respiration pipeline
+            complex_csi = packet.complex_csi()
+            breath_pipe.push_packet(packet.seq, packet.timestamp, complex_csi.H, complex_csi.remap_tag)
+
             ts_sec = packet.timestamp / 1e6
-            raw_val = band_amplitude(packet.amplitudes, band)
-            filtered_val = breath_hampel.filter(raw_val)
-            breath_ts.append(ts_sec)
-            breath_vals.append(filtered_val)
-            while breath_ts and ts_sec - breath_ts[0] > BREATH_WINDOW_SEC:
-                breath_ts.popleft()
-                breath_vals.popleft()
-
-            if mvs_state != MOTION and ts_sec - last_breath_eval >= BREATH_TICK_SEC:
+            # Evaluate pipeline every ~1s (like old BREATH_TICK_SEC)
+            if ts_sec - last_breath_eval >= 1.0:
                 last_breath_eval = ts_sec
-                if len(breath_ts) >= BREATH_RESAMPLE_HZ * 30:
-                    arr_ts = np.array(breath_ts)
-                    arr_vals = np.array(breath_vals)
-                    last_breath_result = detect_breath(arr_ts, arr_vals)
+                # Pass MVS state for early motion rejection
+                pipe_result = breath_pipe.try_adaptive()
+                if pipe_result.respiration is not None:
+                    last_breath_result = pipe_result.respiration
 
-            # Spectrogram processing — always attach the most recent row,
-            # even on packets where push() returns None (i.e. between hops).
-            # This guarantees csi_spectrogram_row is present on every
-            # outgoing message once the buffer has filled at least once,
-            # instead of only appearing on the ~1-in-N packets that land
-            # exactly on a hop boundary.
+            # Spectrogram processing
             if spectrogram_processor is not None:
                 new_row = spectrogram_processor.push(packet.amplitudes, band)
                 if new_row is not None:
