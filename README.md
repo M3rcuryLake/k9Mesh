@@ -116,18 +116,20 @@ A scalar confidence in [0, 100] is derived from the variance/threshold ratio and
 
 A parallel detector: an sklearn `MLPClassifier` (9 → 32 → 16 → 1, with `StandardScaler`) over **nine turbulence-window features** — mean, std, MAD, IQR, peak-to-peak, mean absolute first difference, skewness, excess kurtosis, zero-crossing rate — computed on the same Hampel/low-pass filtered turbulence stream but on the fixed `DEFAULT_BAND` with raw std (CV normalization is deliberately disabled for ML, per upstream).
 
-Models are not shipped pretrained (feature definitions are a reconstruction; upstream weights are incompatible). Train your own:
+The repository includes `wifi/models/model.pkl`; upstream weights are incompatible because these feature definitions are a reconstruction. To train a replacement:
 
 ```bash
-# 1. Collect labeled runs — one label per run, several runs per class
+# 1. Collect independent labeled runs — at least two recordings per class
 sudo python collect_data.py --interface wlp2s0 --label baseline --duration 120 --out data/baseline_01.npz
+sudo python collect_data.py --interface wlp2s0 --label baseline --duration 120 --out data/baseline_02.npz
 sudo python collect_data.py --interface wlp2s0 --label movement --duration 60  --out data/movement_01.npz
+sudo python collect_data.py --interface wlp2s0 --label movement --duration 60  --out data/movement_02.npz
 
 # 2. Train
 python train_model.py --data "data/*.npz" --out ../models/model.pkl
 ```
 
-The bundle (`model.pkl`) is loaded from `wifi/models/`; if absent, ML detection disables itself gracefully and MVS remains the only motion source.
+The trainer holds out complete recording files for evaluation because overlapping windows from one capture are correlated. It requires at least two independent recordings for each class; the checked-in captures currently contain one run per class, so collect more runs before retraining or reporting held-out performance. The bundle (`model.pkl`) is loaded from `wifi/models/`; if absent, ML detection disables itself gracefully and MVS remains the only motion source.
 
 ### 5. Respiration estimation (`respiration.py`)
 
